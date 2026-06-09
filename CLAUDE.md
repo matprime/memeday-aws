@@ -7,6 +7,11 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 ## Project: MemeDay
 Architecture reference: see `docs/ARCHITECTURE.md`. Read it before changing data flow, auth, storage, or on-chain behavior. Bags.fm is mocked: no real mainnet calls without explicit approval.
 
+Auth (Cognito is the only identity system):
+- `userId` IS the Cognito `sub`. Do not generate your own user IDs.
+- Sign-up needs email OR wallet alone (either is valid); link the other later. Never require both.
+- Wallet login is a Cognito custom-auth challenge (sign nonce: Cognito verifies: JWT session). Do not build a separate or parallel wallet/JWT session system alongside Cognito.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
