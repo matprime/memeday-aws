@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { getSupabase } from "@/lib/supabase";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
 import { mintMemeNft } from "@/lib/nft";
 
@@ -17,7 +16,7 @@ export function PostMemeModal({ onClose }: Props) {
   const router = useRouter();
   const wallet = useWallet();
   const { publicKey } = wallet;
-  const { addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
+  const { cognitoToken, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
     useAppStore();
 
   const [caption, setCaption] = useState("");
@@ -65,28 +64,32 @@ export function PostMemeModal({ onClose }: Props) {
     handleFile(e.dataTransfer.files?.[0] ?? null);
   };
 
-  const uploadImage = async (file: File, wallet: string): Promise<string> => {
-    const supabase = getSupabase();
+  const uploadImage = async (file: File): Promise<{ s3Key: string; imageUrl: string }> => {
     const ext = file.name.split(".").pop() ?? "jpg";
-    const path = `${wallet}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage
-      .from("meme-images")
-      .upload(path, file, { upsert: false });
-    if (error) throw new Error(`Upload failed: ${error.message}`);
-    const { data } = supabase.storage.from("meme-images").getPublicUrl(path);
-    return data.publicUrl;
+    const urlRes = await fetch(`/api/upload-url?ext=${ext}`, {
+      headers: { Authorization: `Bearer ${cognitoToken}` },
+    });
+    if (!urlRes.ok) throw new Error("Failed to get upload URL");
+    const { presignedUrl, s3Key, imageUrl } = await urlRes.json();
+    const putRes = await fetch(presignedUrl, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": file.type },
+    });
+    if (!putRes.ok) throw new Error("Image upload failed");
+    return { s3Key, imageUrl };
   };
 
   const handleSubmit = async () => {
-    if (!publicKey || !caption.trim() || !selectedImage) return;
+    if (!cognitoToken || !caption.trim() || !selectedImage) return;
     setLoading(true);
 
     try {
-      const walletAddress = publicKey.toBase58();
+      const walletAddress = publicKey?.toBase58() ?? "";
 
-      // 1. Upload image to Supabase Storage
+      // 1. Upload image to S3 via presigned URL
       setStep("uploading");
-      const imageUrl = await uploadImage(selectedImage, walletAddress);
+      const { s3Key, imageUrl } = await uploadImage(selectedImage);
 
       // 2. Mint NFT on Solana devnet (Phantom will prompt for signature)
       let mintAddress: string | null = null;
@@ -114,25 +117,29 @@ export function PostMemeModal({ onClose }: Props) {
         setMyBagsProject(project.projectId, token.symbol);
       }
 
-      // 3. Upsert user record
+      // 4. Upsert user record
       await fetch("/api/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet_address: walletAddress, bags_project_id: projectId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cognitoToken}`,
+        },
+        body: JSON.stringify({ walletAddr: walletAddress || undefined, bagsProjectId: projectId }),
       });
 
-      // 4. Save meme to DB
+      // 5. Save meme to DB
       const res = await fetch("/api/memes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cognitoToken}`,
+        },
         body: JSON.stringify({
-          creator_wallet: walletAddress,
-          image_url: imageUrl,
+          s3Key,
           caption: caption.trim(),
-          price: isNFT ? parseFloat(nftPrice) : null,
-          is_for_sale: isNFT,
-          is_nft: isNFT,
-          mint_address: mintAddress,
+          isNFT,
+          nftMint: mintAddress ?? undefined,
+          listingPrice: isNFT ? parseFloat(nftPrice) : undefined,
         }),
       });
 
@@ -288,7 +295,7 @@ export function PostMemeModal({ onClose }: Props) {
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={!caption.trim() || !selectedImage}
+              disabled={!caption.trim() || !selectedImage || !cognitoToken}
               className="w-full py-3.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
               Post Meme{!hasCreatorToken && tokenSymbol ? " & Launch Token" : ""}

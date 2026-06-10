@@ -18,7 +18,7 @@ export function BrowseClient({ memes }: Props) {
   const [tab, setTab] = useState<Tab>("today");
 
   const filtered = memes.filter((m) => {
-    const posted = new Date(m.created_at);
+    const posted = new Date(m.createdAt);
     if (tab === "today") {
       const today = new Date();
       return posted.toDateString() === today.toDateString();

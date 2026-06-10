@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getUserByWallet, getMemesByCreator } from "@/lib/db";
+import { getUserById, getMemesByCreator } from "@/lib/db";
 import { MemeCard } from "@/components/MemeCard";
 import { ImageIcon, Zap, BarChart3 } from "lucide-react";
 
@@ -12,16 +12,17 @@ interface Props {
 }
 
 export default async function CreatorPage({ params }: Props) {
-  const wallet = decodeURIComponent(params.id);
+  const userId = decodeURIComponent(params.id);
   const [user, memes] = await Promise.all([
-    getUserByWallet(wallet),
-    getMemesByCreator(wallet),
+    getUserById(userId),
+    getMemesByCreator(userId),
   ]);
 
   if (!user && memes.length === 0) notFound();
 
-  const username = `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
-  const avatarUrl = `https://api.dicebear.com/8.x/bottts/svg?seed=${wallet}`;
+  const seed = user?.walletAddr ?? userId;
+  const username = `${userId.slice(0, 4)}...${userId.slice(-4)}`;
+  const avatarUrl = `https://api.dicebear.com/8.x/bottts/svg?seed=${seed}`;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -37,7 +38,7 @@ export default async function CreatorPage({ params }: Props) {
             />
             <div>
               <h1 className="text-2xl font-black text-white font-mono mb-1">{username}</h1>
-              <p className="text-xs text-gray-500 font-mono break-all">{wallet}</p>
+              <p className="text-xs text-gray-500 font-mono break-all">{userId}</p>
             </div>
           </div>
         </div>
@@ -50,13 +51,13 @@ export default async function CreatorPage({ params }: Props) {
           </div>
           <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
             <BarChart3 size={16} className="text-gray-500 mb-2" />
-            <p className="text-lg font-bold text-white">{user?.cred_score ?? 0}</p>
+            <p className="text-lg font-bold text-white">{user?.credScore ?? 0}</p>
             <p className="text-xs text-gray-500 mt-0.5">Cred Score</p>
           </div>
-          {user?.bags_project_id && (
+          {user?.bagsProjectId && (
             <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
               <Zap size={16} className="text-bags mb-2" />
-              <p className="text-sm font-mono text-bags truncate">{user.bags_project_id}</p>
+              <p className="text-sm font-mono text-bags truncate">{user.bagsProjectId}</p>
               <p className="text-xs text-gray-500 mt-0.5">Bags Project</p>
             </div>
           )}

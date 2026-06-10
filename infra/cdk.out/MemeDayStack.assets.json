@@ -1,0 +1,21 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "e9f7dd8fcc80e5561c63657b07fbd2addf0d727d25a03941fd70b0bc5eb20ef9": {
+      "displayName": "MemeDayStack Template",
+      "source": {
+        "path": "MemeDayStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-eu-west-1-8c8a7554": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-eu-west-1",
+          "objectKey": "e9f7dd8fcc80e5561c63657b07fbd2addf0d727d25a03941fd70b0bc5eb20ef9.json",
+          "region": "eu-west-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-eu-west-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

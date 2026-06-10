@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getMemeById, getComments, getUserByWallet } from "@/lib/db";
+import { getMemeById, getComments, getUserById } from "@/lib/db";
 import { Creator } from "@/lib/types";
 import { CommentSection } from "@/components/CommentSection";
 import { MemeActionBar } from "@/components/MemeActionBar";
-import { ArrowLeft, ExternalLink, Flame } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export const dynamic = "force-dynamic";
@@ -14,18 +14,19 @@ interface Props {
   params: { id: string };
 }
 
-function buildStubCreator(wallet: string, bagsProjectId?: string | null): Creator {
+function buildStubCreator(userId: string, walletAddr?: string | null, bagsProjectId?: string | null): Creator {
+  const seed = walletAddr ?? userId;
   return {
-    id: wallet,
-    walletAddress: wallet,
-    username: `${wallet.slice(0, 4)}...${wallet.slice(-4)}`,
-    avatarUrl: `https://api.dicebear.com/8.x/identicon/png?seed=${encodeURIComponent(wallet)}&size=80&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`,
+    id: userId,
+    walletAddress: walletAddr ?? "",
+    username: `${userId.slice(0, 4)}...${userId.slice(-4)}`,
+    avatarUrl: `https://api.dicebear.com/8.x/identicon/png?seed=${encodeURIComponent(seed)}&size=80&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`,
     bio: "",
     bagsProjectId: bagsProjectId ?? "",
     memeCount: 0,
     joinedAt: new Date().toISOString(),
     token: {
-      symbol: wallet.slice(0, 5).toUpperCase(),
+      symbol: userId.slice(0, 5).toUpperCase(),
       name: "Creator Token",
       price: 0.01,
       priceChange24h: 0,
@@ -44,8 +45,8 @@ export default async function MemePage({ params }: Props) {
   ]);
   if (!meme) notFound();
 
-  const user = await getUserByWallet(meme.creator_wallet);
-  const creator = buildStubCreator(meme.creator_wallet, user?.bags_project_id);
+  const user = await getUserById(meme.creatorId);
+  const creator = buildStubCreator(meme.creatorId, user?.walletAddr, user?.bagsProjectId);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -61,21 +62,21 @@ export default async function MemePage({ params }: Props) {
 
       <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-gray-900 mb-6 border border-border">
         <Image
-          src={meme.image_url}
+          src={meme.imageUrl}
           alt={meme.caption}
           fill
           className="object-contain"
           priority
         />
-        {meme.is_nft && meme.price && (
+        {!!meme.nftMint && meme.listingPrice && (
           <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-sm border border-accent/50 text-accent-light text-sm font-bold px-3 py-1.5 rounded-xl">
-            NFT · {meme.price} SOL
+            NFT · {meme.listingPrice} SOL
           </div>
         )}
       </div>
 
       <div className="flex items-center justify-between mb-6">
-        <Link href={`/creator/${meme.creator_wallet}`} className="flex items-center gap-3 group">
+        <Link href={`/creator/${meme.creatorId}`} className="flex items-center gap-3 group">
           <Image
             src={creator.avatarUrl}
             alt={creator.username}
@@ -89,14 +90,14 @@ export default async function MemePage({ params }: Props) {
               {creator.username}
             </p>
             <p className="text-xs text-gray-500">
-              {formatDistanceToNow(new Date(meme.created_at), { addSuffix: true })}
+              {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
             </p>
           </div>
         </Link>
 
-        {meme.is_nft && meme.mint_address && (
+        {!!meme.nftMint && (
           <a
-            href={`https://explorer.solana.com/address/${meme.mint_address}?cluster=devnet`}
+            href={`https://explorer.solana.com/address/${meme.nftMint}?cluster=devnet`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent-light border border-border hover:border-accent/50 px-3 py-2 rounded-lg transition-colors"

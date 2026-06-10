@@ -3,8 +3,6 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift } from "lucide-react";
 import { DbMeme, Creator } from "@/lib/types";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useAppStore } from "@/lib/store";
 import { InvestModal } from "./InvestModal";
 import { TipModal } from "./TipModal";
@@ -16,34 +14,37 @@ interface Props {
 }
 
 export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
-  const { publicKey } = useWallet();
-  const { setVisible } = useWalletModal();
-  const { votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
+  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
   const [investOpen, setInvestOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
-  const [votes, setVotes] = useState(meme.total_votes);
+  const [votes, setVotes] = useState(meme.likeCount);
 
-  const wallet = publicKey?.toBase58() ?? null;
+  const userId = cognitoToken ?? null;
 
   useEffect(() => {
-    hydrateVotedMemes(wallet);
-  }, [hydrateVotedMemes, wallet]);
+    hydrateVotedMemes(userId);
+  }, [hydrateVotedMemes, userId]);
 
   const hasVoted = votedMemes.has(meme.id);
-  const displayVotes = votes;
 
   const handleVote = async () => {
-    if (!publicKey) { setVisible(true); return; }
+    if (!cognitoToken) {
+      addToast("Login to vote", "error");
+      return;
+    }
     if (hasVoted) return;
-    voteOnMeme(wallet, meme.id);
+    voteOnMeme(userId, meme.id);
     setVotes((v) => v + 1);
     const res = await fetch(`/api/memes/${meme.id}/vote`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet_address: wallet }),
+      headers: { Authorization: `Bearer ${cognitoToken}` },
     });
-    if (!res.ok) throw new Error("Vote failed");
-    addToast("Vote recorded!", "success");
+    if (!res.ok) {
+      addToast("Vote failed", "error");
+      setVotes((v) => v - 1);
+    } else {
+      addToast("Vote recorded!", "success");
+    }
   };
 
   return (
@@ -60,7 +61,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
             }`}
           >
             <ArrowUp size={16} />
-            {displayVotes.toLocaleString()} votes
+            {votes.toLocaleString()} votes
           </button>
 
           <a
@@ -71,13 +72,13 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
             {commentCount} comments
           </a>
 
-          {meme.is_nft && meme.price && (
+          {!!meme.nftMint && meme.listingPrice && (
             <button
-              onClick={() => publicKey ? addToast("NFT purchase coming soon!", "success") : setVisible(true)}
+              onClick={() => addToast("NFT purchase coming soon!", "success")}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-accent/10 text-accent-light hover:bg-accent/20 border border-accent/30 transition-colors"
             >
               <ShoppingCart size={16} />
-              Buy NFT · {meme.price} SOL
+              Buy NFT · {meme.listingPrice} SOL
             </button>
           )}
         </div>
@@ -116,7 +117,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
 
       {tipOpen && (
         <TipModal
-          creatorWallet={meme.creator_wallet}
+          creatorWallet={meme.creatorWalletAddr ?? ""}
           memeCaption={meme.caption}
           onClose={() => setTipOpen(false)}
         />

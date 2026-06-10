@@ -25,6 +25,14 @@ Built with Next.js 14, AWS, and the Solana wallet ecosystem.
 
 Next.js 14 (App Router), TypeScript, Tailwind CSS, AWS (DynamoDB + S3), @solana/web3.js, Solana Wallet Adapter, Solana Pay, Bags SDK, Metaplex, Zustand
 
+## IAM Setup
+
+This will create table MemeDay in AWS DynamoDB
+1. In AWS Create IAM user `memeday-deploy`
+2. Attach to user policies directly: PowerUserAccess, IAMFullAccess 
+3. Generate access keys and add to `.env
+4. cd infra & npm run bootstrap & npm run dev
+
 ## Setup
 
 Requires Node.js 22 LTS.
@@ -33,8 +41,17 @@ npm install
 
 cp .env.example .env.local
 
-Fill in .env.local:
-- TEST_SOLANA_PRIVATE_KEY:         Your Solana dev net key for automation test
+Fill in .env:
+─── AWS ───────────────────────────────────────────────────────────────────
+AWS_ACCESS_KEY_ID:                  Your AWS access key 
+AWS_SECRET_ACCESS_KEY:              Your AWS access key secret
+AWS_REGION:                         Your AWS region
+
+─── DynamoDB ──────────────────────────────────────────────────────────────
+DYNAMODB_TABLE_NAME=MemeDay         Your app's single table name
+
+─── Solana ────────────────────────────────────────────────────────────────
+- TEST_SOLANA_PRIVATE_KEY:          Your Solana dev net key for automation test
 
 
 

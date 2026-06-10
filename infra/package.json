@@ -1,0 +1,24 @@
+{
+  "name": "memeday-infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "synth": "dotenv -e ../.env -- npx cdk synth",
+    "bootstrap": "dotenv -e ../.env -- npx cdk bootstrap aws://409415529750/eu-west-1",
+    "deploy": "dotenv -e ../.env -- npx cdk deploy",
+    "diff": "dotenv -e ../.env -- npx cdk diff",
+    "destroy": "dotenv -e ../.env -- npx cdk destroy"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1126.0",
+    "dotenv-cli": "^8.0.0",
+    "source-map-support": "^0.5.21",
+    "ts-node": "^10.9.0",
+    "typescript": "~5.7.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.258.1",
+    "constructs": "^10.0.0"
+  }
+}
