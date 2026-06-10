@@ -19,10 +19,14 @@ interface AppState {
   lastBagsEvent: BagsEvent | null;
   emitBagsEvent: (event: BagsEvent) => void;
 
-  // Optimistic votes
+  // Cognito session — set after a successful Cognito auth (email or wallet custom-auth)
+  cognitoToken: string | null;
+  setCognitoToken: (token: string | null) => void;
+
+  // Optimistic votes (client-side, keyed by userId for persistence)
   votedMemes: Set<string>;
-  hydrateVotedMemes: (wallet: string | null) => void;
-  voteOnMeme: (wallet: string | null, memeId: string) => void;
+  hydrateVotedMemes: (userId: string | null) => void;
+  voteOnMeme: (userId: string | null, memeId: string) => void;
 
   // Creator project state (per session)
   myBagsProjectId: string | null;
@@ -45,14 +49,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ lastBagsEvent: event });
   },
 
+  cognitoToken: null,
+  setCognitoToken: (token) => set({ cognitoToken: token }),
+
   votedMemes: new Set(),
-  hydrateVotedMemes: (wallet) => {
-    if (!wallet) {
+  hydrateVotedMemes: (userId) => {
+    if (!userId) {
       set({ votedMemes: new Set() });
       return;
     }
     try {
-      const raw = localStorage.getItem(`votedMemes:${wallet}`);
+      const raw = localStorage.getItem(`votedMemes:${userId}`);
       const arr = raw ? (JSON.parse(raw) as unknown) : [];
       const ids = Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
       set({ votedMemes: new Set(ids) });
@@ -60,13 +67,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ votedMemes: new Set() });
     }
   },
-  voteOnMeme: (wallet, memeId) =>
+  voteOnMeme: (userId, memeId) =>
     set((s) => {
       const next = new Set(s.votedMemes);
       next.add(memeId);
-      if (wallet) {
+      if (userId) {
         try {
-          localStorage.setItem(`votedMemes:${wallet}`, JSON.stringify(Array.from(next)));
+          localStorage.setItem(`votedMemes:${userId}`, JSON.stringify(Array.from(next)));
         } catch {
           // ignore storage errors (private mode / quota)
         }

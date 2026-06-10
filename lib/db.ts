@@ -1,169 +1,329 @@
 import { unstable_noStore as noStore } from "next/cache";
-import { getSupabase, getSupabaseAdmin } from "./supabase";
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { randomUUID } from "crypto";
+import { dynamo, TABLE } from "./dynamo";
 import { DbComment, DbMeme, DbUser } from "./types";
 
+const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN ?? "";
+
+function cfUrl(s3Key: string): string {
+  return CLOUDFRONT_DOMAIN ? `https://${CLOUDFRONT_DOMAIN}/${s3Key}` : s3Key;
+}
+
+function parseMeme(item: Record<string, unknown>): DbMeme {
+  return {
+    id: item.memeId as string,
+    creatorId: item.creatorId as string,
+    ownerId: item.ownerId as string,
+    creatorWalletAddr: item.creatorWalletAddr as string | undefined,
+    s3Key: item.s3Key as string,
+    imageUrl: cfUrl(item.s3Key as string),
+    caption: item.caption as string,
+    nftMint: item.nftMint as string | undefined,
+    status: (item.status as DbMeme["status"]) ?? "active",
+    likeCount: (item.likeCount as number) ?? 0,
+    commentCount: (item.commentCount as number) ?? 0,
+    score: (item.score as number) ?? 0,
+    listingPrice: item.listingPrice as number | undefined,
+    createdAt: item.createdAt as string,
+  };
+}
+
+function parseComment(item: Record<string, unknown>): DbComment {
+  return {
+    id: item.commentId as string,
+    memeId: item.memeId as string,
+    userId: item.userId as string,
+    walletAddr: item.walletAddr as string | undefined,
+    body: item.body as string,
+    createdAt: item.createdAt as string,
+  };
+}
+
+function parseUser(item: Record<string, unknown>): DbUser {
+  return {
+    userId: item.userId as string,
+    email: item.email as string | undefined,
+    walletAddr: item.walletAddr as string | undefined,
+    displayName: item.displayName as string | undefined,
+    authMethods: (item.authMethods as string[]) ?? [],
+    bagsProjectId: item.bagsProjectId as string | undefined,
+    creatorTokenAddr: item.creatorTokenAddr as string | undefined,
+    credScore: (item.credScore as number) ?? 0,
+    createdAt: item.createdAt as string,
+  };
+}
+
+// Scans for all base meme items (PK=MEME#* SK=MEME#*).
+// In production, the global feed would be served from the FEED#GLOBAL
+// materialized view written by Lambda Streams. For the Vercel layer, scan suffices.
 export async function getMemes(): Promise<DbMeme[]> {
   noStore();
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("memes")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function getMemesToday(): Promise<DbMeme[]> {
-  noStore();
-  const supabase = getSupabase();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const { data, error } = await supabase
-    .from("memes")
-    .select("*")
-    .gte("created_at", today.toISOString())
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function getMemesThisWeek(): Promise<DbMeme[]> {
-  noStore();
-  const supabase = getSupabase();
-  const weekAgo = new Date(Date.now() - 7 * 86400000);
-  const { data, error } = await supabase
-    .from("memes")
-    .select("*")
-    .gte("created_at", weekAgo.toISOString())
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
+  const result = await dynamo.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "begins_with(PK, :mp) AND begins_with(SK, :mp)",
+      ExpressionAttributeValues: { ":mp": "MEME#" },
+    })
+  );
+  return (result.Items ?? [])
+    .map((item) => parseMeme(item as Record<string, unknown>))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function getMemeOfDay(): Promise<DbMeme | null> {
   noStore();
-  const supabase = getSupabase();
-  const { data } = await supabase
-    .from("memes")
-    .select("*")
-    .order("total_votes", { ascending: false })
-    .limit(1)
-    .single();
-  return data ?? null;
+  const memes = await getMemes();
+  if (memes.length === 0) return null;
+  return memes.reduce((best, m) => (m.score > best.score ? m : best), memes[0]);
 }
 
 export async function getMemeById(id: string): Promise<DbMeme | null> {
   noStore();
-  const supabase = getSupabase();
-  const { data } = await supabase
-    .from("memes")
-    .select("*")
-    .eq("id", id)
-    .single();
-  return data ?? null;
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `MEME#${id}`, SK: `MEME#${id}` },
+    })
+  );
+  if (!result.Item) return null;
+  return parseMeme(result.Item as Record<string, unknown>);
 }
 
-export async function getMemesByCreator(wallet: string): Promise<DbMeme[]> {
+// Query GSI1 to get memes created by a specific user (creatorId = Cognito sub).
+export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
   noStore();
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("memes")
-    .select("*")
-    .eq("creator_wallet", wallet)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI1",
+      KeyConditionExpression: "GSI1PK = :creator AND begins_with(GSI1SK, :mp)",
+      ExpressionAttributeValues: {
+        ":creator": `USER#${userId}`,
+        ":mp": "MEME#",
+      },
+    })
+  );
+  return (result.Items ?? []).map((item) =>
+    parseMeme(item as Record<string, unknown>)
+  );
 }
 
-export async function createMeme(
-  meme: Omit<DbMeme, "id" | "created_at" | "total_votes">
-): Promise<DbMeme> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("memes")
-    .insert({ ...meme, total_votes: 0 })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+export async function createMeme(meme: {
+  creatorId: string;
+  creatorWalletAddr?: string;
+  s3Key: string;
+  caption: string;
+  nftMint?: string;
+  listingPrice?: number;
+  isNFT: boolean;
+}): Promise<DbMeme> {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const status: DbMeme["status"] = meme.listingPrice ? "listed" : "active";
+
+  const item: Record<string, unknown> = {
+    PK: `MEME#${id}`,
+    SK: `MEME#${id}`,
+    GSI1PK: `USER#${meme.creatorId}`,
+    GSI1SK: `MEME#${now}`,
+    GSI2PK: `OWNER#${meme.creatorId}`,
+    GSI2SK: `MEME#${now}`,
+    memeId: id,
+    creatorId: meme.creatorId,
+    ownerId: meme.creatorId,
+    s3Key: meme.s3Key,
+    caption: meme.caption,
+    status,
+    likeCount: 0,
+    commentCount: 0,
+    score: 0,
+    createdAt: now,
+  };
+  if (meme.creatorWalletAddr) item.creatorWalletAddr = meme.creatorWalletAddr;
+  if (meme.nftMint) item.nftMint = meme.nftMint;
+  if (meme.listingPrice !== undefined) item.listingPrice = meme.listingPrice;
+
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
+  return parseMeme(item);
 }
 
 export async function getComments(memeId: string): Promise<DbComment[]> {
   noStore();
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("comments")
-    .select("*")
-    .eq("meme_id", memeId)
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data ?? [];
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `MEME#${memeId}`,
+        ":prefix": "COMMENT#",
+      },
+    })
+  );
+  return (result.Items ?? []).map((item) =>
+    parseComment(item as Record<string, unknown>)
+  );
 }
 
-export async function addComment(
-  comment: Pick<DbComment, "meme_id" | "user_wallet" | "text">
-): Promise<DbComment> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("comments")
-    .insert({ ...comment, likes: 0 })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+export async function addComment(comment: {
+  memeId: string;
+  userId: string;
+  walletAddr?: string;
+  body: string;
+}): Promise<DbComment> {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+
+  const item: Record<string, unknown> = {
+    PK: `MEME#${comment.memeId}`,
+    SK: `COMMENT#${now}#${id}`,
+    commentId: id,
+    memeId: comment.memeId,
+    userId: comment.userId,
+    body: comment.body,
+    createdAt: now,
+  };
+  if (comment.walletAddr) item.walletAddr = comment.walletAddr;
+
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
+  await dynamo.send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: { PK: `MEME#${comment.memeId}`, SK: `MEME#${comment.memeId}` },
+      UpdateExpression: "ADD commentCount :one",
+      ExpressionAttributeValues: { ":one": 1 },
+    })
+  );
+
+  return parseComment(item);
 }
 
-export async function upsertUser(
-  user: Partial<DbUser> & { wallet_address: string }
-): Promise<DbUser> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("users")
-    .upsert(user, { onConflict: "wallet_address" })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-export async function getUserByWallet(wallet: string): Promise<DbUser | null> {
-  noStore();
-  const supabase = getSupabase();
-  const { data } = await supabase
-    .from("users")
-    .select("*")
-    .eq("wallet_address", wallet)
-    .single();
-  return data ?? null;
-}
-
-export async function getCreatorsWithMemeCounts(): Promise<
-  Array<DbUser & { memeCount: number; joinedAt: string }>
-> {
-  noStore();
-  const supabase = getSupabase();
-  const [usersRes, memesRes] = await Promise.all([
-    supabase.from("users").select("*"),
-    supabase
-      .from("memes")
-      .select("creator_wallet, created_at")
-      .order("created_at", { ascending: true }),
-  ]);
-
-  const memeCounts = new Map<string, number>();
-  const firstMemeAt = new Map<string, string>();
-  for (const meme of memesRes.data ?? []) {
-    memeCounts.set(meme.creator_wallet, (memeCounts.get(meme.creator_wallet) ?? 0) + 1);
-    if (!firstMemeAt.has(meme.creator_wallet)) {
-      firstMemeAt.set(meme.creator_wallet, meme.created_at);
+// Returns true if vote was recorded, false if the user already voted.
+// Uses a conditional PutItem on LIKE#<userId> for server-side dedup.
+export async function voteMeme(memeId: string, userId: string): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: {
+          PK: `MEME#${memeId}`,
+          SK: `LIKE#${userId}`,
+          createdAt: new Date().toISOString(),
+        },
+        ConditionExpression: "attribute_not_exists(PK)",
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
     }
+    throw err;
   }
 
-  return (usersRes.data ?? []).map((u) => ({
-    ...u,
-    memeCount: memeCounts.get(u.wallet_address) ?? 0,
-    joinedAt: firstMemeAt.get(u.wallet_address) ?? new Date().toISOString(),
-  }));
+  await dynamo.send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+      UpdateExpression: "ADD likeCount :one, score :one",
+      ExpressionAttributeValues: { ":one": 1 },
+    })
+  );
+  return true;
+}
+
+export async function upsertUser(user: {
+  userId: string;
+  email?: string;
+  walletAddr?: string;
+  displayName?: string;
+  authMethods?: string[];
+  bagsProjectId?: string;
+  creatorTokenAddr?: string;
+}): Promise<DbUser> {
+  const now = new Date().toISOString();
+
+  let updateExpr =
+    "SET #uid = :uid, createdAt = if_not_exists(createdAt, :now), credScore = if_not_exists(credScore, :zero), authMethods = :am";
+  const exprNames: Record<string, string> = { "#uid": "userId" };
+  const exprVals: Record<string, unknown> = {
+    ":uid": user.userId,
+    ":now": now,
+    ":zero": 0,
+    ":am": user.authMethods ?? [],
+  };
+
+  if (user.email !== undefined) {
+    updateExpr += ", email = :email, GSI1PK = :emailKey, GSI1SK = :userKey";
+    exprVals[":email"] = user.email;
+    exprVals[":emailKey"] = `EMAIL#${user.email}`;
+    exprVals[":userKey"] = `USER#${user.userId}`;
+  }
+  if (user.walletAddr !== undefined) {
+    updateExpr += ", walletAddr = :walletAddr, GSI2PK = :walletKey, GSI2SK = :userKey2";
+    exprVals[":walletAddr"] = user.walletAddr;
+    exprVals[":walletKey"] = `WALLET#${user.walletAddr}`;
+    exprVals[":userKey2"] = `USER#${user.userId}`;
+  }
+  if (user.displayName !== undefined) {
+    updateExpr += ", displayName = :displayName";
+    exprVals[":displayName"] = user.displayName;
+  }
+  if (user.bagsProjectId !== undefined) {
+    updateExpr += ", bagsProjectId = :bagsProjectId";
+    exprVals[":bagsProjectId"] = user.bagsProjectId;
+  }
+  if (user.creatorTokenAddr !== undefined) {
+    updateExpr += ", creatorTokenAddr = :creatorTokenAddr";
+    exprVals[":creatorTokenAddr"] = user.creatorTokenAddr;
+  }
+
+  const result = await dynamo.send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: { PK: `USER#${user.userId}`, SK: `USER#${user.userId}` },
+      UpdateExpression: updateExpr,
+      ExpressionAttributeNames: exprNames,
+      ExpressionAttributeValues: exprVals,
+      ReturnValues: "ALL_NEW",
+    })
+  );
+
+  return parseUser(result.Attributes as Record<string, unknown>);
+}
+
+export async function getUserById(userId: string): Promise<DbUser | null> {
+  noStore();
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `USER#${userId}`, SK: `USER#${userId}` },
+    })
+  );
+  if (!result.Item) return null;
+  return parseUser(result.Item as Record<string, unknown>);
+}
+
+// Query GSI2 to look up a user by linked wallet address.
+export async function getUserByWallet(wallet: string): Promise<DbUser | null> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI2",
+      KeyConditionExpression: "GSI2PK = :walletKey",
+      ExpressionAttributeValues: { ":walletKey": `WALLET#${wallet}` },
+      Limit: 1,
+    })
+  );
+  const item = result.Items?.[0];
+  if (!item) return null;
+  return parseUser(item as Record<string, unknown>);
 }
 
 export interface NftMetadataRow {
@@ -178,24 +338,38 @@ export async function createNftMetadata(row: {
   image_url: string;
   description: string;
 }): Promise<{ id: string }> {
-  const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
-    .from("nft_metadata")
-    .insert(row)
-    .select("id")
-    .single();
-  if (error) throw error;
-  return { id: data.id };
+  const id = randomUUID();
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: {
+        PK: `NFTMETA#${id}`,
+        SK: `NFTMETA#${id}`,
+        nftMetaId: id,
+        name: row.name,
+        image_url: row.image_url,
+        description: row.description,
+        createdAt: new Date().toISOString(),
+      },
+    })
+  );
+  return { id };
 }
 
 export async function getNftMetadata(id: string): Promise<NftMetadataRow | null> {
   noStore();
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("nft_metadata")
-    .select("id, name, image_url, description")
-    .eq("id", id)
-    .single();
-  if (error) return null;
-  return data;
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `NFTMETA#${id}`, SK: `NFTMETA#${id}` },
+    })
+  );
+  if (!result.Item) return null;
+  const item = result.Item as Record<string, unknown>;
+  return {
+    id: item.nftMetaId as string,
+    name: item.name as string,
+    image_url: item.image_url as string,
+    description: item.description as string,
+  };
 }

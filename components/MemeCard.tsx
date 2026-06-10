@@ -5,8 +5,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowUp, MessageCircle, ShoppingCart, Zap, Gift } from "lucide-react";
 import { DbMeme } from "@/lib/types";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useAppStore } from "@/lib/store";
 import { formatDistanceToNow } from "date-fns";
 import { CreatorAvatar } from "./CreatorAvatar";
@@ -18,41 +16,45 @@ interface Props {
   commentCount?: number;
 }
 
-function shortWallet(wallet: string) {
-  return `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
+function shortId(id: string) {
+  return `${id.slice(0, 4)}...${id.slice(-4)}`;
 }
 
 export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
-  const { publicKey } = useWallet();
-  const { setVisible } = useWalletModal();
-  const { votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
-  const [votes, setVotes] = useState(meme.total_votes);
+  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
+  const [votes, setVotes] = useState(meme.likeCount);
   const [tipOpen, setTipOpen] = useState(false);
 
-  const wallet = publicKey?.toBase58() ?? null;
+  // Use cognitoToken sub as the stable userId for hydrating local vote state.
+  // Until Cognito auth is wired on the frontend, votedMemes persists per token.
+  const userId = cognitoToken ?? null;
 
   useEffect(() => {
-    hydrateVotedMemes(wallet);
-  }, [hydrateVotedMemes, wallet]);
+    hydrateVotedMemes(userId);
+  }, [hydrateVotedMemes, userId]);
 
   const hasVoted = votedMemes.has(meme.id);
-  const displayVotes = votes;
+  const displayLabel = shortId(meme.creatorId);
 
   const handleVote = async () => {
-    if (!publicKey) { setVisible(true); return; }
+    if (!cognitoToken) {
+      addToast("Login with Cognito to vote", "error");
+      return;
+    }
     if (hasVoted) return;
-    voteOnMeme(wallet, meme.id);
+    voteOnMeme(userId, meme.id);
     setVotes((v) => v + 1);
     const res = await fetch(`/api/memes/${meme.id}/vote`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet_address: wallet }),
+      headers: { Authorization: `Bearer ${cognitoToken}` },
     });
-    if (!res.ok) throw new Error("Vote failed");
-    addToast(`Voted for "${meme.caption.slice(0, 30)}…"`, "success");
+    if (!res.ok) {
+      addToast("Vote failed", "error");
+      setVotes((v) => v - 1);
+    } else {
+      addToast(`Voted for "${meme.caption.slice(0, 30)}…"`, "success");
+    }
   };
-
-  const username = shortWallet(meme.creator_wallet);
 
   return (
     <>
@@ -64,14 +66,14 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
       <Link href={`/meme/${meme.id}`} className="block relative">
         <div className={`relative w-full overflow-hidden bg-gray-900 ${featured ? "h-72" : "h-48"}`}>
           <Image
-            src={meme.image_url}
+            src={meme.imageUrl}
             alt={meme.caption}
             fill
             className="object-contain transition-transform duration-500 group-hover:scale-105"
           />
-          {meme.is_nft && meme.price && (
+          {meme.nftMint && meme.listingPrice && (
             <div className="absolute top-2 right-2 bg-black/70 backdrop-blur-sm border border-accent/50 text-accent-light text-xs font-bold px-2 py-0.5 rounded-lg">
-              NFT · {meme.price} SOL
+              NFT · {meme.listingPrice} SOL
             </div>
           )}
         </div>
@@ -85,20 +87,20 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
         </Link>
 
         <div className="flex items-center justify-between mb-3">
-          <Link href={`/creator/${meme.creator_wallet}`} className="flex items-center gap-2 group/creator">
+          <Link href={`/creator/${meme.creatorId}`} className="flex items-center gap-2 group/creator">
             <CreatorAvatar
-              seed={meme.creator_wallet}
-              alt={username}
+              seed={meme.creatorId}
+              alt={displayLabel}
               size={24}
               shape="square"
               className="rounded-md"
             />
             <p className="text-xs font-semibold text-white group-hover/creator:text-accent-light transition-colors font-mono">
-              {username}
+              {displayLabel}
             </p>
           </Link>
           <p className="text-xs text-gray-500">
-            {formatDistanceToNow(new Date(meme.created_at), { addSuffix: true })}
+            {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
           </p>
         </div>
 
@@ -112,7 +114,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
             }`}
           >
             <ArrowUp size={14} />
-            {displayVotes.toLocaleString()}
+            {votes.toLocaleString()}
           </button>
 
           <Link
@@ -123,9 +125,9 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
             {commentCount}
           </Link>
 
-          {meme.is_nft && meme.is_for_sale && (
+          {meme.nftMint && meme.status === "listed" && (
             <button
-              onClick={() => publicKey ? addToast("NFT purchase coming soon!", "success") : setVisible(true)}
+              onClick={() => addToast("NFT purchase coming soon!", "success")}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-accent-light bg-bg/60 hover:bg-accent/10 border border-border/50 hover:border-accent/50 transition-colors"
             >
               <ShoppingCart size={14} />
@@ -154,7 +156,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
 
     {tipOpen && (
       <TipModal
-        creatorWallet={meme.creator_wallet}
+        creatorWallet={meme.creatorWalletAddr ?? ""}
         memeCaption={meme.caption}
         onClose={() => setTipOpen(false)}
       />

@@ -285,10 +285,10 @@ export const getTrendingTokens = () =>
 export const getSpikingTokens = () =>
   MOCK_CREATORS.filter((c) => c.token.spiking);
 
-function walletHash(wallet: string): number {
+function walletHash(seed: string): number {
   let h = 0;
-  for (let i = 0; i < wallet.length; i++) {
-    h = (h * 31 + wallet.charCodeAt(i)) & 0xffff;
+  for (let i = 0; i < seed.length; i++) {
+    h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
   }
   return h;
 }
@@ -296,20 +296,23 @@ function walletHash(wallet: string): number {
 export function creatorFromDbUser(
   user: DbUser & { memeCount: number; joinedAt: string }
 ): Creator {
-  const { wallet_address: wallet, memeCount, joinedAt } = user;
-  const h = walletHash(wallet);
+  const { userId, walletAddr, bagsProjectId, memeCount, joinedAt } = user;
+  const seed = walletAddr ?? userId;
+  const h = walletHash(seed);
   const price = parseFloat(((h % 80 + 5) / 1000).toFixed(4));
   const holders = (h % 180) + memeCount * 5 + 5;
   const totalVolume = parseFloat((memeCount * ((h % 8) + 1)).toFixed(1));
-  const symbol = wallet.slice(0, 4).toUpperCase();
+  const symbol = seed.slice(0, 4).toUpperCase();
 
   return {
-    id: wallet,
-    walletAddress: wallet,
-    username: `${wallet.slice(0, 4)}...${wallet.slice(-4)}`,
-    avatarUrl: `https://api.dicebear.com/8.x/identicon/svg?seed=${wallet}`,
+    id: userId,
+    walletAddress: walletAddr ?? "",
+    username: walletAddr
+      ? `${walletAddr.slice(0, 4)}...${walletAddr.slice(-4)}`
+      : `${userId.slice(0, 8)}...`,
+    avatarUrl: `https://api.dicebear.com/8.x/identicon/svg?seed=${seed}`,
     bio: "Meme creator on Solana",
-    bagsProjectId: user.bags_project_id ?? `mock-${wallet.slice(0, 8)}`,
+    bagsProjectId: bagsProjectId ?? `mock-${userId.slice(0, 8)}`,
     token: {
       symbol,
       name: `${symbol} Token`,

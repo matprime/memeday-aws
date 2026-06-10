@@ -1,24 +1,33 @@
 import { NextResponse } from "next/server";
-import { createMeme } from "@/lib/db";
+import { getUserIdFromRequest } from "@/lib/cognito";
+import { createMeme, getUserById } from "@/lib/db";
 
 export async function POST(req: Request) {
+  const userId = await getUserIdFromRequest(req);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
-    const { creator_wallet, image_url, caption, price, is_for_sale, is_nft, mint_address } = body;
+    const { s3Key, caption, isNFT, nftMint, listingPrice } = body;
 
-    if (!creator_wallet || !image_url || !caption) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    if (!s3Key || !caption) {
+      return NextResponse.json({ error: "s3Key and caption are required" }, { status: 400 });
     }
 
+    // Denormalize creator wallet for Solana Pay tips
+    const creator = await getUserById(userId);
     const meme = await createMeme({
-      creator_wallet,
-      image_url,
+      creatorId: userId,
+      creatorWalletAddr: creator?.walletAddr,
+      s3Key,
       caption,
-      price: price ?? null,
-      is_for_sale: is_for_sale ?? false,
-      is_nft: is_nft ?? false,
-      mint_address: mint_address ?? null,
+      nftMint: nftMint ?? undefined,
+      listingPrice: listingPrice ?? undefined,
+      isNFT: isNFT ?? false,
     });
+
     return NextResponse.json({ meme });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

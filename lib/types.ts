@@ -55,42 +55,42 @@ export type BagsEvent =
 
 export type Tab = "today" | "week" | "all";
 
-// Supabase DB row types
-export interface DbMeme {
-  id: string;
-  creator_wallet: string;
-  image_url: string;
-  caption: string;
-  price: number | null;
-  is_for_sale: boolean;
-  is_nft: boolean;
-  mint_address: string | null;
-  total_votes: number;
-  created_at: string;
-}
+// DynamoDB single-table item types (table: MemeDay)
 
 export interface DbUser {
+  userId: string;           // Cognito sub — primary identity
+  email?: string;
+  walletAddr?: string;      // Solana public key (linked after signup)
+  displayName?: string;
+  authMethods: string[];    // e.g. ["email"] | ["wallet"] | ["email","wallet"]
+  bagsProjectId?: string;
+  creatorTokenAddr?: string;
+  credScore: number;
+  createdAt: string;
+}
+
+export interface DbMeme {
   id: string;
-  wallet_address: string;
-  bags_project_id: string | null;
-  creator_token_address: string | null;
-  cred_score: number;
+  creatorId: string;        // Cognito sub of creator (fixed)
+  ownerId: string;          // Cognito sub of current owner (changes on sale)
+  creatorWalletAddr?: string; // denormalized for Solana Pay tips
+  s3Key: string;            // S3 object key
+  imageUrl: string;         // CloudFront URL (derived from s3Key at read time)
+  caption: string;
+  nftMint?: string;         // Solana mint address
+  status: "active" | "listed" | "sold";
+  likeCount: number;
+  commentCount: number;
+  score: number;
+  listingPrice?: number;    // SOL, present when status = "listed"
+  createdAt: string;
 }
 
 export interface DbComment {
   id: string;
-  meme_id: string;
-  user_wallet: string;
-  text: string;
-  likes: number;
-  created_at: string;
-}
-
-export interface DbMemeSale {
-  id: string;
-  meme_id: string;
-  buyer_wallet: string;
-  seller_wallet: string;
-  price: number;
-  royalty_paid: number;
+  memeId: string;
+  userId: string;           // Cognito sub
+  walletAddr?: string;      // for display (if user has a linked wallet)
+  body: string;
+  createdAt: string;
 }
