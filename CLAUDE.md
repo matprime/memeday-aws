@@ -69,6 +69,15 @@ For multi-step tasks, state a brief plan:
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## 5\. Git Workflow
+**Never commit directly to `main`. Always work on a branch.**
+-   Create a feature branch before starting any work: `git checkout -b feat/<short-description>`
+-   `main` is the stable branch. It must stay in a working state at all times.
+-   A branch is only merged to `main` when all tests pass. Do not propose or execute a merge with failing tests.
+-   Tests cover existing functionality and must be updated when new functionality is added. If a change breaks an existing test, fix the test (or the code) before merging — do not delete or skip tests to make CI green.
+-   If you are unsure whether a change will break existing tests, run them before proceeding.
+
 ---
 
 ## Effort Level Check
