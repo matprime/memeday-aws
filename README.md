@@ -9,7 +9,7 @@ Built with Next.js 14, AWS, and the Solana wallet ecosystem.
 ## What works today
 
 - Meme upload, browsing, and voting
-- Comments with Supabase persistence
+- Comments with DynamoDB persistence
 - Solana wallet connection (Phantom)
 - Solana Pay QR tipping: scan to send SOL directly to the creator's wallet
 - Creator leaderboard and trending tokens page
@@ -27,7 +27,7 @@ Next.js 14 (App Router), TypeScript, Tailwind CSS, AWS (DynamoDB + S3), @solana/
 
 ## AWS Setup
 
-This will create table MemeDay in AWS DynamoDB
+This will create the MemeDay DynamoDB table and the MemeDay Cognito user pool
 1. In AWS Create IAM user `memeday-deploy`
 2. Attach to user policies directly: PowerUserAccess, IAMFullAccess 
 3. Generate access keys and add to `.env
@@ -48,8 +48,14 @@ AWS_REGION:                    Your AWS region
 
 DYNAMODB_TABLE_NAME=MemeDay    Your app's single table name
 
+COGNITO_USER_POOL_ID:          Cognito user pool ID (from `cdk deploy` output UserPoolId)
+COGNITO_CLIENT_ID:             Cognito app client ID (from `cdk deploy` output UserPoolClientId)
+WALLET_AUTH_SECRET:            Random secret for wallet auth nonces (generate with: openssl rand -hex 32)
 
+S3_BUCKET_NAME:                S3 bucket for meme image uploads
+CLOUDFRONT_DOMAIN:             CloudFront distribution domain, without https://
 
+NEXT_PUBLIC_APP_URL:           Public URL of the app (e.g. https://your-app.vercel.app)
 
 npm run dev
 
