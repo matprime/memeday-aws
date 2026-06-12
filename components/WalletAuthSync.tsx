@@ -13,7 +13,9 @@ export function WalletAuthSync() {
 
   useEffect(() => {
     if (!connected) {
-      setCognitoToken(null);
+      // Only clear wallet-established sessions — an email session survives
+      // a wallet disconnect.
+      if (useAppStore.getState().authMethod === "wallet") setCognitoToken(null);
       return;
     }
 
@@ -48,7 +50,7 @@ export function WalletAuthSync() {
         if (!verifyRes.ok) throw new Error("Auth verification failed");
         const { accessToken } = await verifyRes.json();
 
-        setCognitoToken(accessToken);
+        setCognitoToken(accessToken, "wallet");
       } catch (err) {
         addToast(
           err instanceof Error ? err.message : "Wallet authentication failed",

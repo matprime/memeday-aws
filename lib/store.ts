@@ -21,7 +21,13 @@ interface AppState {
 
   // Cognito session — set after a successful Cognito auth (email or wallet custom-auth)
   cognitoToken: string | null;
-  setCognitoToken: (token: string | null) => void;
+  authMethod: "email" | "wallet" | null;
+  authEmail: string | null;
+  setCognitoToken: (
+    token: string | null,
+    method?: "email" | "wallet",
+    email?: string
+  ) => void;
 
   // Optimistic votes (client-side, keyed by userId for persistence)
   votedMemes: Set<string>;
@@ -50,7 +56,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   cognitoToken: null,
-  setCognitoToken: (token) => set({ cognitoToken: token }),
+  authMethod: null,
+  authEmail: null,
+  setCognitoToken: (token, method, email) =>
+    set({
+      cognitoToken: token,
+      authMethod: token ? method ?? null : null,
+      authEmail: token ? email ?? null : null,
+    }),
 
   votedMemes: new Set(),
   hydrateVotedMemes: (userId) => {
