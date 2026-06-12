@@ -8,7 +8,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
-import { DbComment, DbMeme, DbUser } from "./types";
+import type { DbComment, DbMeme, DbUser } from "./types";
 
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN ?? "";
 

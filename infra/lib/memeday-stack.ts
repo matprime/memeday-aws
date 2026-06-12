@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import { Construct } from "constructs";
 
@@ -38,6 +39,34 @@ export class MemeDayStack extends cdk.Stack {
       partitionKey: { name: "GSI3PK", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "GSI3SK", type: dynamodb.AttributeType.STRING },
     });
+
+    // Opaque usernames (wallet_<addr>) with email as an optional sign-in alias.
+    // Email must NOT be a username attribute or required — wallet-only sign-up
+    // is valid (see CLAUDE.md: email OR wallet alone).
+    const userPool = new cognito.UserPool(this, "MemeDayUserPool", {
+      userPoolName: "MemeDay",
+      selfSignUpEnabled: true,
+      signInAliases: { username: true, email: true },
+      autoVerify: { email: true },
+      standardAttributes: {
+        email: { required: false, mutable: true },
+      },
+      customAttributes: {
+        walletAddr: new cognito.StringAttribute({ mutable: true }),
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy,
+    });
+
+    const userPoolClient = userPool.addClient("MemeDayWebClient", {
+      authFlows: {
+        adminUserPassword: true, // wallet login via /api/auth/wallet/verify
+        userSrp: true, // email/password login
+      },
+    });
+
+    new cdk.CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
+    new cdk.CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
 
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "TableArn", { value: table.tableArn });

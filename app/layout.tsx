@@ -3,6 +3,7 @@ import "./globals.css";
 import { SolanaWalletProvider } from "@/components/WalletProvider";
 import { Navbar } from "@/components/Navbar";
 import { BagsToastContainer } from "@/components/BagsToast";
+import { WalletAuthSync } from "@/components/WalletAuthSync";
 
 export const metadata: Metadata = {
   title: "MemeDay — Creator Economy on Solana",
@@ -19,6 +20,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <SolanaWalletProvider>
+          <WalletAuthSync />
           <Navbar />
           <main className="min-h-screen">{children}</main>
           <BagsToastContainer />
