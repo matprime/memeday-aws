@@ -11,4 +11,5 @@ node_modules/
 *.log
 CLAUDE.md
 cdk.out/
+infra/dist/
 HANDOFF.md

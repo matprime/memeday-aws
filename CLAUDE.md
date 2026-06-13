@@ -72,6 +72,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5\. Git Workflow
 **Never commit directly to `main`. Always work on a branch.**
+-   Never commit changes
 -   Create a feature branch before starting any work: `git checkout -b feat/<short-description>`
 -   `main` is the stable branch. It must stay in a working state at all times.
 -   A branch is only merged to `main` when all tests pass. Do not propose or execute a merge with failing tests.

@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Flame, Trophy, TrendingUp, LayoutGrid, Plus } from "lucide-react";
+import { Flame, Trophy, TrendingUp, LayoutGrid, Plus, Mail, LogOut } from "lucide-react";
 import { WalletButton } from "./WalletButton";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useState } from "react";
 import { PostMemeModal } from "./PostMemeModal";
+import { EmailAuthModal } from "./EmailAuthModal";
+import { useAppStore } from "@/lib/store";
 
 const NAV = [
   { href: "/", label: "Today", icon: Flame },
@@ -19,15 +20,13 @@ const NAV = [
 export function Navbar() {
   const pathname = usePathname();
   const { publicKey } = useWallet();
-  const { setVisible } = useWalletModal();
+  const { cognitoToken, authMethod, authEmail, setCognitoToken, addToast } = useAppStore();
   const [postOpen, setPostOpen] = useState(false);
+  const [emailAuthOpen, setEmailAuthOpen] = useState(false);
 
-  const handlePostClick = () => {
-    if (!publicKey) {
-      setVisible(true);
-    } else {
-      setPostOpen(true);
-    }
+  const handleEmailSignOut = () => {
+    setCognitoToken(null);
+    addToast("Signed out.", "success");
   };
 
   return (
@@ -64,14 +63,43 @@ export function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={handlePostClick}
-              className="hidden sm:flex items-center gap-1.5 bg-accent hover:bg-accent-light text-white px-3 py-2 rounded-xl font-semibold text-sm transition-all hover:scale-105 active:scale-95"
-            >
-              <Plus size={15} />
-              Post Meme
-            </button>
-            <WalletButton />
+            {cognitoToken && (
+              <button
+                onClick={() => setPostOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 bg-accent hover:bg-accent-light text-white px-3 py-2 rounded-xl font-semibold text-sm transition-all hover:scale-105 active:scale-95"
+              >
+                <Plus size={15} />
+                Post Meme
+              </button>
+            )}
+            {authMethod === "email" ? (
+              // Email session: show who's signed in + sign-out, no wallet button
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50 max-w-[160px] truncate">
+                  {authEmail}
+                </span>
+                <button
+                  onClick={handleEmailSignOut}
+                  className="text-gray-400 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-red-900/20"
+                  title="Sign out"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : (
+              <>
+                {!publicKey && !cognitoToken && (
+                  <button
+                    onClick={() => setEmailAuthOpen(true)}
+                    className="flex items-center gap-2 text-gray-300 hover:text-white border border-border hover:border-accent px-3 py-2 rounded-xl font-semibold text-sm transition-all"
+                  >
+                    <Mail size={15} />
+                    Sign in
+                  </button>
+                )}
+                <WalletButton />
+              </>
+            )}
           </div>
         </div>
 
@@ -93,6 +121,7 @@ export function Navbar() {
       </nav>
 
       {postOpen && <PostMemeModal onClose={() => setPostOpen(false)} />}
+      {emailAuthOpen && <EmailAuthModal onClose={() => setEmailAuthOpen(false)} />}
     </>
   );
 }
