@@ -7,9 +7,23 @@ import { useAppStore } from "@/lib/store";
 // Triggers Cognito auth automatically whenever Phantom connects.
 // Clears the token when the wallet disconnects.
 export function WalletAuthSync() {
-  const { publicKey, signMessage, connected } = useWallet();
+  const { publicKey, signMessage, connected, disconnect, wallet } = useWallet();
   const { cognitoToken, setCognitoToken, addToast } = useAppStore();
   const authInFlight = useRef(false);
+  const prevWalletNameRef = useRef<string | null>(null);
+
+  // Show feedback when user selects a wallet that isn't installed.
+  // WalletProviderBase silently skips connect() for NotDetected wallets — onError never fires.
+  useEffect(() => {
+    if (!wallet) {
+      prevWalletNameRef.current = null;
+      return;
+    }
+    if (wallet.readyState === "NotDetected" && wallet.adapter.name !== prevWalletNameRef.current) {
+      addToast(`${wallet.adapter.name} not detected — install the extension and reload.`, "error");
+    }
+    prevWalletNameRef.current = wallet.adapter.name;
+  }, [wallet?.adapter.name, wallet?.readyState]);
 
   useEffect(() => {
     if (!connected) {
@@ -56,6 +70,8 @@ export function WalletAuthSync() {
           err instanceof Error ? err.message : "Wallet authentication failed",
           "error"
         );
+        // Disconnect so the email sign-in button reappears (publicKey = null hides it)
+        disconnect().catch(() => {});
       } finally {
         authInFlight.current = false;
       }
