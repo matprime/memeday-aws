@@ -121,7 +121,6 @@ Before using RTK, verify it exists:
 ```bash
 command -v rtk && rtk --version
 ```
-
 If RTK is installed:
 -   Use `rtk gain` to show token savings analytics.
 -   Use `rtk gain --history` to show command usage history.
@@ -130,6 +129,11 @@ If RTK is installed:
 Do not assume RTK is installed.
 If `rtk` is unavailable or fails verification, use normal shell commands instead.
 Note: If `rtk gain` fails, there may be a binary name collision with another `rtk` tool.
+
+## RTK grep is lossy — do not trust it for code content
+  `grep`/`rg` may be rewritten by the RTK hook into `rtk grep`, which silently blanks/truncates matching-line CONTENT and mis-groups output (rtk-ai/rtk#1436).
+  - Read code with the Read tool, never by eyeballing grep output.
+  - To locate symbols + line numbers, use grep/rg for LOCATIONS only, then Read those lines — or scan with `python3 -c`. Never trust grep's line TEXT.
 
 ## Secret Handling
 Never ask the user to paste, share, or display secret values including:
