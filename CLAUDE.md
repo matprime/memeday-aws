@@ -80,7 +80,6 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 -   If you are unsure whether a change will break existing tests, run them before proceeding.
 
 ---
-
 ## Effort Level Check
 Be cognizant of token usage. Be concise and advise me when to start a new chat or session.
 
@@ -94,7 +93,6 @@ Recommend High, XHigh, or Max effort for:
 * Multi-file investigations
 * Complex research
 If a higher effort level is warranted, stop and tell the user: "This task would benefit from [High/XHigh/Max] effort. Please increase the effort level and rerun the request." Do not proceed until the user confirms.
-
 
 ## Model Routing Guidance
 - Simple lookups, grep, file reads → suggest Haiku
@@ -114,26 +112,6 @@ If a higher effort level is warranted, stop and tell the user: "This task would 
 - If you cannot verify something, say "I haven't verified this" and do not write code that depends on the unverified claim.
 - "I don't know" and "I need to check first" are valid and preferred over a confident guess.
 - Do not claim tests or builds passed unless you actually ran the command in this session.
-
-## Optional Tool: RTK  
-RTK may be available on some machines as a token-optimized CLI proxy.
-Before using RTK, verify it exists:
-```bash
-command -v rtk && rtk --version
-```
-If RTK is installed:
--   Use `rtk gain` to show token savings analytics.
--   Use `rtk gain --history` to show command usage history.
--   Use `rtk discover` to analyze Claude Code history for missed opportunities.
--   Use `rtk proxy <cmd>` only for raw debugging without filtering.
-Do not assume RTK is installed.
-If `rtk` is unavailable or fails verification, use normal shell commands instead.
-Note: If `rtk gain` fails, there may be a binary name collision with another `rtk` tool.
-
-## RTK grep is lossy — do not trust it for code content
-  `grep`/`rg` may be rewritten by the RTK hook into `rtk grep`, which silently blanks/truncates matching-line CONTENT and mis-groups output (rtk-ai/rtk#1436).
-  - Read code with the Read tool, never by eyeballing grep output.
-  - To locate symbols + line numbers, use grep/rg for LOCATIONS only, then Read those lines — or scan with `python3 -c`. Never trust grep's line TEXT.
 
 ## Secret Handling
 Never ask the user to paste, share, or display secret values including:
