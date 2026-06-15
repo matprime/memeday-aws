@@ -72,7 +72,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5\. Git Workflow
 **Never commit directly to `main`. Always work on a branch.**
--   Never commit changes
+-   Never commit changes without user permission
 -   Create a feature branch before starting any work: `git checkout -b feat/<short-description>`
 -   `main` is the stable branch. It must stay in a working state at all times.
 -   A branch is only merged to `main` when all tests pass. Do not propose or execute a merge with failing tests.
@@ -110,6 +110,10 @@ If a higher effort level is warranted, stop and tell the user: "This task would 
 - Never fabricate specific values (timestamps, addresses, line numbers, config values, API responses) without a cited source.
 - If an exact value is unknown, say "I don't know — check [source]" rather than inferring a plausible-looking value.
 - This applies even when a fabricated value would be structurally correct (e.g., a correctly formatted ISO timestamp that has the wrong time).
+- Before claiming a function, class, import, or config key exists, verify it by reading the file or running grep. Never fabricate symbols.
+- If you cannot verify something, say "I haven't verified this" and do not write code that depends on the unverified claim.
+- "I don't know" and "I need to check first" are valid and preferred over a confident guess.
+- Do not claim tests or builds passed unless you actually ran the command in this session.
 
 ## Optional Tool: RTK  
 RTK may be available on some machines as a token-optimized CLI proxy.
