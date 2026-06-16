@@ -72,7 +72,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5\. Git Workflow
 **Never commit directly to `main`. Always work on a branch.**
--   Never commit changes
+-   Never commit changes without user permission
 -   Create a feature branch before starting any work: `git checkout -b feat/<short-description>`
 -   `main` is the stable branch. It must stay in a working state at all times.
 -   A branch is only merged to `main` when all tests pass. Do not propose or execute a merge with failing tests.
@@ -80,7 +80,6 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 -   If you are unsure whether a change will break existing tests, run them before proceeding.
 
 ---
-
 ## Effort Level Check
 Be cognizant of token usage. Be concise and advise me when to start a new chat or session.
 
@@ -94,7 +93,6 @@ Recommend High, XHigh, or Max effort for:
 * Multi-file investigations
 * Complex research
 If a higher effort level is warranted, stop and tell the user: "This task would benefit from [High/XHigh/Max] effort. Please increase the effort level and rerun the request." Do not proceed until the user confirms.
-
 
 ## Model Routing Guidance
 - Simple lookups, grep, file reads → suggest Haiku
@@ -110,22 +108,10 @@ If a higher effort level is warranted, stop and tell the user: "This task would 
 - Never fabricate specific values (timestamps, addresses, line numbers, config values, API responses) without a cited source.
 - If an exact value is unknown, say "I don't know — check [source]" rather than inferring a plausible-looking value.
 - This applies even when a fabricated value would be structurally correct (e.g., a correctly formatted ISO timestamp that has the wrong time).
-
-## Optional Tool: RTK  
-RTK may be available on some machines as a token-optimized CLI proxy.
-Before using RTK, verify it exists:
-```bash
-command -v rtk && rtk --version
-```
-
-If RTK is installed:
--   Use `rtk gain` to show token savings analytics.
--   Use `rtk gain --history` to show command usage history.
--   Use `rtk discover` to analyze Claude Code history for missed opportunities.
--   Use `rtk proxy <cmd>` only for raw debugging without filtering.
-Do not assume RTK is installed.
-If `rtk` is unavailable or fails verification, use normal shell commands instead.
-Note: If `rtk gain` fails, there may be a binary name collision with another `rtk` tool.
+- Before claiming a function, class, import, or config key exists, verify it by reading the file or running grep. Never fabricate symbols.
+- If you cannot verify something, say "I haven't verified this" and do not write code that depends on the unverified claim.
+- "I don't know" and "I need to check first" are valid and preferred over a confident guess.
+- Do not claim tests or builds passed unless you actually ran the command in this session.
 
 ## Secret Handling
 Never ask the user to paste, share, or display secret values including:

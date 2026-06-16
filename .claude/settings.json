@@ -1,17 +1,4 @@
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/shared/bin/rtk hook claude"
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(grep:*)",
@@ -21,7 +8,6 @@
       "Bash(ls:*)",
       "Bash(python3:*)",
       "Bash(python:*)",
-      "Bash(rtk:*)",
       "Bash(npm:*)",
       "Bash(awk *)",
       "Edit(*)"
