@@ -13,7 +13,9 @@ import type { DbComment, DbMeme, DbUser } from "./types";
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN ?? "";
 
 function cfUrl(s3Key: string): string {
-  return CLOUDFRONT_DOMAIN ? `https://${CLOUDFRONT_DOMAIN}/${s3Key}` : s3Key;
+  return CLOUDFRONT_DOMAIN
+    ? `https://${CLOUDFRONT_DOMAIN}/${s3Key}`
+    : `/api/image/${s3Key}`;
 }
 
 function parseMeme(item: Record<string, unknown>): DbMeme {

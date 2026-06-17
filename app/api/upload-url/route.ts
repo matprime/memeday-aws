@@ -20,8 +20,7 @@ export async function GET(request: NextRequest) {
   }
 
   const bucket = process.env.S3_BUCKET_NAME;
-  const cfDomain = process.env.CLOUDFRONT_DOMAIN;
-  if (!bucket || !cfDomain) {
+  if (!bucket) {
     return NextResponse.json({ error: "Storage not configured" }, { status: 500 });
   }
 
@@ -36,6 +35,9 @@ export async function GET(request: NextRequest) {
     { expiresIn: 300 }
   );
 
-  const imageUrl = `https://${cfDomain}/${s3Key}`;
+  const cfDomain = process.env.CLOUDFRONT_DOMAIN;
+  const imageUrl = cfDomain
+    ? `https://${cfDomain}/${s3Key}`
+    : `/api/image/${s3Key}`;
   return NextResponse.json({ presignedUrl, s3Key, imageUrl });
 }
