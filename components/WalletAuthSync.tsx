@@ -76,7 +76,7 @@ export function WalletAuthSync() {
         authInFlight.current = false;
       }
     })();
-  }, [connected, publicKey]);
+  }, [connected, publicKey, signMessage]);
 
   return null;
 }
