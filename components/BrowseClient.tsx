@@ -54,7 +54,7 @@ export function BrowseClient({ memes }: Props) {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map((m) => (
-            <MemeCard key={m.id} meme={m} />
+            <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
           ))}
         </div>
       )}

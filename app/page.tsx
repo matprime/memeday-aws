@@ -59,7 +59,7 @@ export default async function HomePage() {
                 <PoweredByBagsBadge />
               </div>
               <div className="max-w-xl">
-                <MemeCard meme={memeOfDay} featured />
+                <MemeCard meme={memeOfDay} featured commentCount={memeOfDay.commentCount} />
               </div>
             </>
           )}
@@ -94,7 +94,7 @@ export default async function HomePage() {
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {recentMemes.map((m) => (
-              <MemeCard key={m.id} meme={m} />
+              <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
             ))}
           </div>
         )}

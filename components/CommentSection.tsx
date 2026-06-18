@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Send } from "lucide-react";
 import { DbComment } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
@@ -9,10 +10,12 @@ import { formatDistanceToNow } from "date-fns";
 interface Props {
   memeId: string;
   initialComments: DbComment[];
+  onCommentAdded?: () => void;
 }
 
-export function CommentSection({ memeId, initialComments }: Props) {
+export function CommentSection({ memeId, initialComments, onCommentAdded }: Props) {
   const { cognitoToken, addToast } = useAppStore();
+  const router = useRouter();
   const [body, setBody] = useState("");
   const [comments, setComments] = useState<DbComment[]>(initialComments);
 
@@ -41,7 +44,9 @@ export function CommentSection({ memeId, initialComments }: Props) {
     const { comment } = await res.json();
     setComments((prev) => [...prev, comment]);
     setBody("");
+    onCommentAdded?.();
     addToast("Comment posted!", "success");
+    router.refresh();
   };
 
   return (

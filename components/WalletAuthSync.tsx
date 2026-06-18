@@ -64,13 +64,15 @@ export function WalletAuthSync() {
         if (!verifyRes.ok) throw new Error("Auth verification failed");
         const { accessToken } = await verifyRes.json();
 
-        setCognitoToken(accessToken, "wallet");
+        // Don't overwrite an email session that completed while wallet auth was in flight
+        if (!useAppStore.getState().cognitoToken) {
+          setCognitoToken(accessToken, "wallet");
+        }
       } catch (err) {
         addToast(
           err instanceof Error ? err.message : "Wallet authentication failed",
           "error"
         );
-        // Disconnect so the email sign-in button reappears (publicKey = null hides it)
         disconnect().catch(() => {});
       } finally {
         authInFlight.current = false;
