@@ -88,7 +88,7 @@ export function Navbar() {
               </div>
             ) : (
               <>
-                {!publicKey && !cognitoToken && (
+                {!cognitoToken && (
                   <button
                     onClick={() => setEmailAuthOpen(true)}
                     className="flex items-center gap-2 text-gray-300 hover:text-white border border-border hover:border-accent px-3 py-2 rounded-xl font-semibold text-sm transition-all"

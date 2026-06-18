@@ -3,8 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { getMemeById, getComments, getUserById } from "@/lib/db";
 import { Creator } from "@/lib/types";
-import { CommentSection } from "@/components/CommentSection";
-import { MemeActionBar } from "@/components/MemeActionBar";
+import { MemePageClient } from "@/components/MemePageClient";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -108,11 +107,7 @@ export default async function MemePage({ params }: Props) {
         )}
       </div>
 
-      <MemeActionBar meme={meme} creator={creator} commentCount={comments.length} />
-
-      <div className="mt-8 pt-8 border-t border-border">
-        <CommentSection memeId={meme.id} initialComments={comments} />
-      </div>
+      <MemePageClient meme={meme} creator={creator} initialComments={comments} />
     </div>
   );
 }
