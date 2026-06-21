@@ -1,10 +1,4 @@
-# CLAUDE.md
-
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## Project: MemeDay
+# Project: MemeDay
 Architecture reference: see `docs/ARCHITECTURE.md`. Read it before changing data flow, auth, storage, or on-chain behavior. Bags.fm is mocked: no real mainnet calls without explicit approval.
 
 Auth (Cognito is the only identity system):
@@ -12,10 +6,11 @@ Auth (Cognito is the only identity system):
 - Sign-up needs email OR wallet alone (either is valid); link the other later. Never require both.
 - Wallet login is a Cognito custom-auth challenge (sign nonce: Cognito verifies: JWT session). Do not build a separate or parallel wallet/JWT session system alongside Cognito.
 
+# Behavioral guidelines to reduce common LLM coding mistakes
+Merge with project-specific instructions as needed. **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
 ## 1. Think Before Coding
-
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
-
 Before implementing:
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
@@ -23,54 +18,42 @@ Before implementing:
 - If something is unclear, stop. Name what's confusing. Ask.
 
 ## 2. Simplicity First
-
 **Minimum code that solves the problem. Nothing speculative.**
-
 - No features beyond what was asked.
 - No abstractions for single-use code.
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
-
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
 ## 3. Surgical Changes
-
 **Touch only what you must. Clean up only your own mess.**
-
 When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
 - Don't refactor things that aren't broken.
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
-
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
 - Don't remove pre-existing dead code unless asked.
-
 The test: Every changed line should trace directly to the user's request.
 
 ## 4. Goal-Driven Execution
-
 **Define success criteria. Loop until verified.**
-
 Transform tasks into verifiable goals:
 - "Add validation" → "Write tests for invalid inputs, then make them pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
-
 For multi-step tasks, state a brief plan:
 ```
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
 3. [Step] → verify: [check]
 ```
-
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-## 5\. Git Workflow
+## 5. Git Workflow
 **Never commit directly to `main`. Always work on a branch.**
 -   Never commit changes without user permission
 -   Create a feature branch before starting any work: `git checkout -b feat/<short-description>`
@@ -79,12 +62,17 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 -   Tests cover existing functionality and must be updated when new functionality is added. If a change breaks an existing test, fix the test (or the code) before merging — do not delete or skip tests to make CI green.
 -   If you are unsure whether a change will break existing tests, run them before proceeding.
 
----
+# Global rules (all projects)
+
+## Git / GitHub attribution
+NEVER add a `Co-Authored-By: Claude` (or any Claude/Anthropic) trailer to commit messages.
+NEVER list Claude/Anthropic as a contributor, co-author, or author on commits, PRs, or anywhere on GitHub.
+Do not add "Generated with Claude Code" lines to commit messages or PR bodies.
+Commit/PR authorship is the user only.
+
 ## Effort Level Check
 Be cognizant of token usage. Be concise and advise me when to start a new chat or session.
-
 Before starting work, assess whether the current model and effort level is sufficient.
-
 Recommend High, XHigh, or Max effort for:
 * Difficult debugging or root-cause analysis
 * Security reviews
@@ -116,5 +104,4 @@ If a higher effort level is warranted, stop and tell the user: "This task would 
 ## Secret Handling
 Never ask the user to paste, share, or display secret values including:
 private keys, API keys, API secrets, passphrases, passwords, or any credentials.
-If output contains secrets, instruct the user to copy them directly to .env
-without sharing them in chat.
+If output contains secrets, instruct the user to copy them directly to .env without sharing them in chat.
