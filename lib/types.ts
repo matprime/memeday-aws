@@ -8,6 +8,7 @@ export interface Creator {
   token: CreatorToken;
   memeCount: number;
   joinedAt: string;
+  isDemo?: boolean;
 }
 
 export interface CreatorToken {
@@ -65,6 +66,7 @@ export interface DbUser {
   authMethods: string[];    // e.g. ["email"] | ["wallet"] | ["email","wallet"]
   bagsProjectId?: string;
   creatorTokenAddr?: string;
+  creatorTokenSymbol?: string;
   credScore: number;
   createdAt: string;
 }

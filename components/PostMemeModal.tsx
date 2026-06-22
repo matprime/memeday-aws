@@ -16,7 +16,7 @@ export function PostMemeModal({ onClose }: Props) {
   const router = useRouter();
   const wallet = useWallet();
   const { publicKey } = wallet;
-  const { cognitoToken, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
+  const { cognitoToken, authMethod, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
     useAppStore();
 
   const [caption, setCaption] = useState("");
@@ -94,24 +94,28 @@ export function PostMemeModal({ onClose }: Props) {
       // 2. Mint NFT on Solana devnet (Phantom will prompt for signature)
       let mintAddress: string | null = null;
       if (isNFT) {
-        setStep("minting");
-        mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim());
-        addToast("NFT minted on Solana!", "success");
+        if (authMethod !== "wallet") {
+          addToast("NFT minting is only available for wallet-connected users.", "error");
+        } else {
+          setStep("minting");
+          mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim());
+          addToast("NFT minted on Solana!", "success");
+        }
       }
 
-      // 3. Bags project/token for first-time creators
+      // 3. Bags project/token for first-time creators (wallet users only)
       setStep("creating");
       let projectId = myBagsProjectId;
-      let symbol = myTokenSymbol;
+      let createdTokenSymbol: string | null = null;
 
-      if (!hasCreatorToken && tokenSymbol) {
+      if (!hasCreatorToken && tokenSymbol && authMethod === "wallet") {
         const project = await createBagsProject(walletAddress, caption.slice(0, 20));
         projectId = project.projectId;
         emitBagsEvent({ type: "project_created", projectId: project.projectId });
         addToast(`Creator project created on Bags (${project.projectId.slice(0, 12)}…)`, "bags");
 
         const token = await createBagsToken(project.projectId, `${tokenSymbol} Token`, tokenSymbol);
-        symbol = token.symbol;
+        createdTokenSymbol = token.symbol;
         emitBagsEvent({ type: "token_created", symbol: token.symbol, projectId: project.projectId });
         addToast(`Creator token $${token.symbol} is live on Bags!`, "bags");
         setMyBagsProject(project.projectId, token.symbol);
@@ -124,7 +128,11 @@ export function PostMemeModal({ onClose }: Props) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${cognitoToken}`,
         },
-        body: JSON.stringify({ walletAddr: walletAddress || undefined, bagsProjectId: projectId }),
+        body: JSON.stringify({
+          walletAddr: walletAddress || undefined,
+          bagsProjectId: projectId,
+          creatorTokenSymbol: createdTokenSymbol ?? undefined,
+        }),
       });
 
       // 5. Save meme to DB
@@ -232,7 +240,13 @@ export function PostMemeModal({ onClose }: Props) {
               <p className="text-xs text-gray-500">Set a price and earn from sales</p>
             </div>
             <button
-              onClick={() => setIsNFT(!isNFT)}
+              onClick={() => {
+                if (authMethod !== "wallet" && !isNFT) {
+                  addToast("NFT minting is only available for wallet-connected users.", "error");
+                  return;
+                }
+                setIsNFT(!isNFT);
+              }}
               className={`w-11 h-6 rounded-full transition-colors relative ${isNFT ? "bg-accent" : "bg-gray-700"}`}
             >
               <span
@@ -255,14 +269,14 @@ export function PostMemeModal({ onClose }: Props) {
             </div>
           )}
 
-          {!hasCreatorToken && (
+          {!hasCreatorToken && authMethod === "wallet" && (
             <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Zap size={16} className="text-bags" />
                 <p className="text-sm font-bold text-bags">Launch Your Creator Token on Bags</p>
               </div>
               <p className="text-xs text-gray-400 mb-3">
-                First-time creators automatically get a Bags project and a fungible creator token. Fans can invest in you directly.
+                Create a fungible creator token on Bags. Fans can invest in you directly.
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">
                 Token Symbol (2-6 chars, e.g. MLRD)
@@ -275,6 +289,17 @@ export function PostMemeModal({ onClose }: Props) {
                 maxLength={6}
                 className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-bags placeholder:text-gray-600"
               />
+            </div>
+          )}
+
+          {!hasCreatorToken && authMethod === "email" && (
+            <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-xl p-4">
+              <div className="flex items-center gap-2">
+                <Zap size={16} className="text-yellow-500" />
+                <p className="text-sm text-yellow-400">
+                  NFT minting and creator tokens on Bags are only available for wallet-connected users.
+                </p>
+              </div>
             </div>
           )}
 
@@ -298,7 +323,7 @@ export function PostMemeModal({ onClose }: Props) {
               disabled={!caption.trim() || !selectedImage || !cognitoToken}
               className="w-full py-3.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
-              Post Meme{!hasCreatorToken && tokenSymbol ? " & Launch Token" : ""}
+              Post Meme{!hasCreatorToken && tokenSymbol && authMethod === "wallet" ? " & Launch Token" : ""}
             </button>
           )}
         </div>
