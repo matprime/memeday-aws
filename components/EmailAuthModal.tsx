@@ -149,7 +149,7 @@ export function EmailAuthModal({ onClose }: Props) {
           ) : mode === "forgot" ? (
             <div>
               <p className="text-sm text-gray-400 mb-3">
-                Enter your email and we'll send a reset code.
+                Enter your email and we&apos;ll send a reset code.
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">Email</label>
               <input
