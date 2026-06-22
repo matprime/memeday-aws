@@ -94,16 +94,20 @@ export default async function MemePage({ params }: Props) {
           </div>
         </Link>
 
-        {!!meme.nftMint && (
+        {meme.nftMint ? (
           <a
             href={`https://explorer.solana.com/address/${meme.nftMint}?cluster=devnet`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent-light border border-border hover:border-accent/50 px-3 py-2 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 text-xs text-accent-light border border-accent/40 bg-accent/10 hover:bg-accent/20 px-3 py-2 rounded-lg transition-colors font-bold"
           >
             <ExternalLink size={12} />
-            View NFT on Solana
+            NFT · View on Solana
           </a>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs text-gray-500 border border-border/60 bg-bg/60 px-3 py-2 rounded-lg font-semibold">
+            Standard Meme
+          </span>
         )}
       </div>
 

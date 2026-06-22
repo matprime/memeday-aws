@@ -99,9 +99,18 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
               {displayLabel}
             </p>
           </Link>
-          <p className="text-xs text-gray-500">
-            {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
-          </p>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+              meme.nftMint
+                ? "text-accent-light border-accent/40 bg-accent/10"
+                : "text-gray-500 border-border/60 bg-bg/60"
+            }`}>
+              {meme.nftMint ? "NFT" : "Standard"}
+            </span>
+            <p className="text-xs text-gray-500">
+              {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/50">

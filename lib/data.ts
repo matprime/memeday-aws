@@ -277,6 +277,12 @@ export const getTopCreators = () =>
     (a, b) => b.token.totalVolume - a.token.totalVolume
   );
 
+export const getTopCreatorsByMemeCount = () =>
+  [...MOCK_CREATORS].sort((a, b) => b.memeCount - a.memeCount);
+
+export const getMemesByCreator = (creatorId: string) =>
+  MOCK_MEMES.filter((m) => m.creatorId === creatorId);
+
 export const getTrendingTokens = () =>
   [...MOCK_CREATORS].sort(
     (a, b) => b.token.priceChange24h - a.token.priceChange24h
