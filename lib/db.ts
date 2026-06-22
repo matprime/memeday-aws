@@ -311,6 +311,20 @@ export async function getUserById(userId: string): Promise<DbUser | null> {
   return parseUser(result.Item as Record<string, unknown>);
 }
 
+export async function getAllUsers(): Promise<DbUser[]> {
+  noStore();
+  const result = await dynamo.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "begins_with(PK, :up) AND begins_with(SK, :up)",
+      ExpressionAttributeValues: { ":up": "USER#" },
+    })
+  );
+  return (result.Items ?? []).map((item) =>
+    parseUser(item as Record<string, unknown>)
+  );
+}
+
 // Query GSI2 to look up a user by linked wallet address.
 export async function getUserByWallet(wallet: string): Promise<DbUser | null> {
   noStore();
