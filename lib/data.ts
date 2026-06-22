@@ -20,6 +20,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 47,
     joinedAt: "2024-01-15T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-2",
@@ -40,6 +41,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 29,
     joinedAt: "2024-02-20T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-3",
@@ -60,6 +62,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 83,
     joinedAt: "2023-11-05T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-4",
@@ -80,6 +83,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 21,
     joinedAt: "2024-03-10T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-5",
@@ -100,6 +104,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 61,
     joinedAt: "2024-01-28T00:00:00Z",
+    isDemo: true,
   },
 ];
 
@@ -302,13 +307,31 @@ function walletHash(seed: string): number {
 export function creatorFromDbUser(
   user: DbUser & { memeCount: number; joinedAt: string }
 ): Creator {
-  const { userId, walletAddr, bagsProjectId, memeCount, joinedAt } = user;
+  const { userId, walletAddr, bagsProjectId, creatorTokenSymbol, memeCount, joinedAt } = user;
   const seed = walletAddr ?? userId;
   const h = walletHash(seed);
-  const price = parseFloat(((h % 80 + 5) / 1000).toFixed(4));
-  const holders = (h % 180) + memeCount * 5 + 5;
-  const totalVolume = parseFloat((memeCount * ((h % 8) + 1)).toFixed(1));
-  const symbol = seed.slice(0, 4).toUpperCase();
+
+  const token = creatorTokenSymbol
+    ? {
+        symbol: creatorTokenSymbol,
+        name: `${creatorTokenSymbol} Token`,
+        price: 0.001,
+        priceChange24h: 0,
+        holders: 0,
+        totalVolume: 0,
+        marketCap: 0,
+        spiking: false,
+      }
+    : {
+        symbol: seed.slice(0, 4).toUpperCase(),
+        name: `${seed.slice(0, 4).toUpperCase()} Token`,
+        price: parseFloat(((h % 80 + 5) / 1000).toFixed(4)),
+        priceChange24h: parseFloat(((h % 50) - 10).toFixed(1)),
+        holders: (h % 180) + memeCount * 5 + 5,
+        totalVolume: parseFloat((memeCount * ((h % 8) + 1)).toFixed(1)),
+        marketCap: parseFloat((((h % 80 + 5) / 1000) * ((h % 180) + memeCount * 5 + 5) * 0.1).toFixed(2)),
+        spiking: h % 4 === 0,
+      };
 
   return {
     id: userId,
@@ -319,16 +342,7 @@ export function creatorFromDbUser(
     avatarUrl: `https://api.dicebear.com/8.x/identicon/png?seed=${seed}`,
     bio: "Meme creator on Solana",
     bagsProjectId: bagsProjectId ?? `mock-${userId.slice(0, 8)}`,
-    token: {
-      symbol,
-      name: `${symbol} Token`,
-      price,
-      priceChange24h: parseFloat(((h % 50) - 10).toFixed(1)),
-      holders,
-      totalVolume,
-      marketCap: parseFloat((price * holders * 0.1).toFixed(2)),
-      spiking: h % 4 === 0,
-    },
+    token,
     memeCount,
     joinedAt,
   };

@@ -33,8 +33,11 @@ export function TrendingTokenCard({ creator, rank }: Props) {
             <Link href={`/creator/${creator.id}`} className="flex items-center gap-2">
               <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={40} />
               <div>
-                <p className="font-bold text-white text-sm group-hover:text-accent-light transition-colors">
+                <p className="font-bold text-white text-sm group-hover:text-accent-light transition-colors flex items-center gap-1">
                   {creator.username}
+                  {creator.isDemo && (
+                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                  )}
                 </p>
                 <p className="text-xs text-bags font-mono font-bold">
                   ${creator.token.symbol}

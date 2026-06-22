@@ -8,7 +8,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Mode = "signin" | "signup" | "confirm";
+type Mode = "signin" | "signup" | "confirm" | "forgot" | "reset";
 
 export function EmailAuthModal({ onClose }: Props) {
   const { setCognitoToken, addToast } = useAppStore();
@@ -20,6 +20,7 @@ export function EmailAuthModal({ onClose }: Props) {
   // Cognito username returned by signup — needed to confirm, since the email
   // alias only becomes usable after verification.
   const [pendingUsername, setPendingUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const post = async (path: string, body: Record<string, string>) => {
@@ -67,6 +68,14 @@ export function EmailAuthModal({ onClose }: Props) {
         setPendingUsername(username);
         setMode("confirm");
         addToast("Verification code sent — check your email.", "success");
+      } else if (mode === "forgot") {
+        await post("/api/auth/email/forgot-password", { email });
+        setMode("reset");
+        addToast("Reset code sent — check your email.", "success");
+      } else if (mode === "reset") {
+        await post("/api/auth/email/reset-password", { email, code, newPassword });
+        const { accessToken } = await post("/api/auth/email/login", { email, password: newPassword });
+        await finishLogin(accessToken);
       } else {
         await post("/api/auth/email/confirm", { username: pendingUsername, code });
         const { accessToken } = await post("/api/auth/email/login", { email, password });
@@ -87,7 +96,13 @@ export function EmailAuthModal({ onClose }: Props) {
   };
 
   const canSubmit =
-    mode === "confirm" ? code.trim().length > 0 : email.trim().length > 0 && password.length > 0;
+    mode === "confirm"
+      ? code.trim().length > 0
+      : mode === "forgot"
+      ? email.trim().length > 0
+      : mode === "reset"
+      ? code.trim().length > 0 && newPassword.length > 0
+      : email.trim().length > 0 && password.length > 0;
 
   return (
     <div
@@ -97,7 +112,15 @@ export function EmailAuthModal({ onClose }: Props) {
       <div className="bg-surface border border-border rounded-2xl w-full max-w-sm animate-slide-up shadow-2xl">
         <div className="flex items-center justify-between p-5 border-b border-border">
           <h2 className="font-bold text-white text-lg">
-            {mode === "signin" ? "Sign in with Email" : mode === "signup" ? "Create Account" : "Verify Email"}
+            {mode === "signin"
+              ? "Sign in with Email"
+              : mode === "signup"
+              ? "Create Account"
+              : mode === "forgot"
+              ? "Reset Password"
+              : mode === "reset"
+              ? "Choose New Password"
+              : "Verify Email"}
           </h2>
           <button
             onClick={onClose}
@@ -123,6 +146,52 @@ export function EmailAuthModal({ onClose }: Props) {
                 className="w-full bg-bg/60 border border-border rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-accent placeholder:text-gray-600"
               />
             </div>
+          ) : mode === "forgot" ? (
+            <div>
+              <p className="text-sm text-gray-400 mb-3">
+                Enter your email and we'll send a reset code.
+              </p>
+              <label className="text-xs text-gray-400 mb-1.5 block font-medium">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && canSubmit && !loading && handleSubmit()}
+                placeholder="you@example.com"
+                className="w-full bg-bg/60 border border-border rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-accent placeholder:text-gray-600"
+              />
+            </div>
+          ) : mode === "reset" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-400">
+                We sent a reset code to <span className="text-white">{email}</span>.
+              </p>
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block font-medium">Reset code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="123456"
+                  className="w-full bg-bg/60 border border-border rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-accent placeholder:text-gray-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block font-medium">New password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && canSubmit && !loading && handleSubmit()}
+                  placeholder="••••••••"
+                  className="w-full bg-bg/60 border border-border rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-accent placeholder:text-gray-600"
+                />
+                <p className="text-xs text-gray-600 mt-1.5">
+                  At least 8 characters with uppercase, lowercase, number, and symbol.
+                </p>
+              </div>
+            </div>
           ) : (
             <>
               <div>
@@ -136,7 +205,18 @@ export function EmailAuthModal({ onClose }: Props) {
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium">Password</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs text-gray-400 font-medium">Password</label>
+                  {mode === "signin" && (
+                    <button
+                      type="button"
+                      onClick={() => setMode("forgot")}
+                      className="text-xs text-accent-light hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <input
                   type="password"
                   value={password}
@@ -157,7 +237,15 @@ export function EmailAuthModal({ onClose }: Props) {
           {loading ? (
             <div className="w-full py-3 rounded-xl bg-accent/20 border border-accent/30 flex items-center justify-center gap-2 text-accent-light font-semibold">
               <Loader2 size={18} className="animate-spin" />
-              {mode === "signin" ? "Signing in…" : mode === "signup" ? "Creating account…" : "Verifying…"}
+              {mode === "signin"
+                ? "Signing in…"
+                : mode === "signup"
+                ? "Creating account…"
+                : mode === "forgot"
+                ? "Sending code…"
+                : mode === "reset"
+                ? "Resetting password…"
+                : "Verifying…"}
             </div>
           ) : (
             <button
@@ -166,17 +254,32 @@ export function EmailAuthModal({ onClose }: Props) {
               className="w-full py-3 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >
               <Mail size={16} />
-              {mode === "signin" ? "Sign In" : mode === "signup" ? "Sign Up" : "Verify & Sign In"}
+              {mode === "signin"
+                ? "Sign In"
+                : mode === "signup"
+                ? "Sign Up"
+                : mode === "forgot"
+                ? "Send Reset Code"
+                : mode === "reset"
+                ? "Reset Password"
+                : "Verify & Sign In"}
             </button>
           )}
 
-          {mode !== "confirm" && (
+          {mode !== "confirm" && mode !== "reset" && (
             <p className="text-xs text-gray-500 text-center">
               {mode === "signin" ? (
                 <>
                   No account?{" "}
                   <button onClick={() => setMode("signup")} className="text-accent-light hover:underline">
                     Sign up
+                  </button>
+                </>
+              ) : mode === "forgot" ? (
+                <>
+                  Remember it?{" "}
+                  <button onClick={() => setMode("signin")} className="text-accent-light hover:underline">
+                    Sign in
                   </button>
                 </>
               ) : (

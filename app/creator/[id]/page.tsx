@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { getUserById, getMemesByCreator } from "@/lib/db";
+import { MOCK_CREATORS } from "@/lib/data";
 import { MemeCard } from "@/components/MemeCard";
 import { ImageIcon, Zap, BarChart3 } from "lucide-react";
 
@@ -18,7 +19,24 @@ export default async function CreatorPage({ params }: Props) {
     getMemesByCreator(userId),
   ]);
 
-  if (!user && memes.length === 0) notFound();
+  const demoCreator = MOCK_CREATORS.find((c) => c.id === userId);
+  if (!user && memes.length === 0) {
+    if (demoCreator) {
+      return (
+        <div className="max-w-5xl mx-auto px-4 py-8">
+          <div className="bg-surface border border-yellow-500/30 rounded-2xl p-8 text-center">
+            <p className="text-4xl mb-4">🎭</p>
+            <h1 className="text-xl font-black text-white mb-2">Demo Account</h1>
+            <p className="text-gray-400 text-sm mb-1">
+              <span className="text-yellow-400 font-semibold">{demoCreator.username}</span> is sample data used to showcase the app.
+            </p>
+            <p className="text-gray-500 text-sm">No real profile page exists for demo accounts.</p>
+          </div>
+        </div>
+      );
+    }
+    notFound();
+  }
 
   const seed = user?.walletAddr ?? userId;
   const username = `${userId.slice(0, 4)}...${userId.slice(-4)}`;
@@ -57,8 +75,12 @@ export default async function CreatorPage({ params }: Props) {
           {user?.bagsProjectId && (
             <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
               <Zap size={16} className="text-bags mb-2" />
-              <p className="text-sm font-mono text-bags truncate">{user.bagsProjectId}</p>
-              <p className="text-xs text-gray-500 mt-0.5">Bags Project</p>
+              <p className="text-sm font-mono text-bags truncate">
+                {user.creatorTokenSymbol ?? user.bagsProjectId}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {user.creatorTokenSymbol ? "Creator Token" : "Bags Project"}
+              </p>
             </div>
           )}
         </div>

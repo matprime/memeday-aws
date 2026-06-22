@@ -10,6 +10,13 @@ import { PostMemeModal } from "./PostMemeModal";
 import { EmailAuthModal } from "./EmailAuthModal";
 import { useAppStore } from "@/lib/store";
 
+function parseTokenSub(token: string): string | null {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.sub ?? null;
+  } catch { return null; }
+}
+
 const NAV = [
   { href: "/", label: "Today", icon: Flame },
   { href: "/browse", label: "Browse", icon: LayoutGrid },
@@ -21,6 +28,7 @@ export function Navbar() {
   const pathname = usePathname();
   const { publicKey } = useWallet();
   const { cognitoToken, authMethod, authEmail, setCognitoToken, addToast } = useAppStore();
+  const userId = cognitoToken ? parseTokenSub(cognitoToken) : null;
   const [postOpen, setPostOpen] = useState(false);
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
 
@@ -75,9 +83,12 @@ export function Navbar() {
             {authMethod === "email" ? (
               // Email session: show who's signed in + sign-out, no wallet button
               <div className="flex items-center gap-2">
-                <span className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50 max-w-[160px] truncate">
+                <Link
+                  href={userId ? `/creator/${userId}` : "#"}
+                  className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50 max-w-[160px] truncate hover:text-white transition-colors"
+                >
                   {authEmail}
-                </span>
+                </Link>
                 <button
                   onClick={handleEmailSignOut}
                   className="text-gray-400 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-red-900/20"
@@ -97,7 +108,7 @@ export function Navbar() {
                     Sign in
                   </button>
                 )}
-                <WalletButton />
+                <WalletButton userId={userId} />
               </>
             )}
           </div>

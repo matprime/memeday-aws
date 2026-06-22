@@ -57,6 +57,7 @@ function parseUser(item: Record<string, unknown>): DbUser {
     authMethods: (item.authMethods as string[]) ?? [],
     bagsProjectId: item.bagsProjectId as string | undefined,
     creatorTokenAddr: item.creatorTokenAddr as string | undefined,
+    creatorTokenSymbol: item.creatorTokenSymbol as string | undefined,
     credScore: (item.credScore as number) ?? 0,
     createdAt: item.createdAt as string,
   };
@@ -247,6 +248,7 @@ export async function upsertUser(user: {
   authMethods?: string[];
   bagsProjectId?: string;
   creatorTokenAddr?: string;
+  creatorTokenSymbol?: string;
 }): Promise<DbUser> {
   const now = new Date().toISOString();
 
@@ -283,6 +285,10 @@ export async function upsertUser(user: {
   if (user.creatorTokenAddr !== undefined) {
     updateExpr += ", creatorTokenAddr = :creatorTokenAddr";
     exprVals[":creatorTokenAddr"] = user.creatorTokenAddr;
+  }
+  if (user.creatorTokenSymbol !== undefined) {
+    updateExpr += ", creatorTokenSymbol = :creatorTokenSymbol";
+    exprVals[":creatorTokenSymbol"] = user.creatorTokenSymbol;
   }
 
   const result = await dynamo.send(

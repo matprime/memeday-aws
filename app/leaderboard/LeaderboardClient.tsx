@@ -97,8 +97,11 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
                           <Crown size={16} className="absolute -top-2 -right-1 text-gold" />
                         )}
                       </div>
-                      <p className="text-xs font-bold text-white text-center group-hover:text-accent-light transition-colors">
+                      <p className="text-xs font-bold text-white text-center group-hover:text-accent-light transition-colors flex items-center justify-center gap-1">
                         {creator.username}
+                        {creator.isDemo && (
+                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                        )}
                       </p>
                       <p className="text-xs text-bags font-mono font-bold">${creator.token.symbol}</p>
                     </Link>
@@ -133,8 +136,11 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
                     <span className="text-gray-600 font-bold w-5 text-sm">{i + 1}</span>
                     <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={36} />
                     <div>
-                      <Link href={`/creator/${creator.id}`} className="text-sm font-semibold text-white hover:text-accent-light transition-colors">
+                      <Link href={`/creator/${creator.id}`} className="text-sm font-semibold text-white hover:text-accent-light transition-colors inline-flex items-center gap-1">
                         {creator.username}
+                        {creator.isDemo && (
+                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                        )}
                       </Link>
                       <p className="text-xs text-bags font-mono">${creator.token.symbol}</p>
                     </div>
@@ -182,7 +188,12 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
                     <span className="text-gray-600 font-bold w-5 text-sm">{i + 1}</span>
                     <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={36} />
                     <div>
-                      <p className="text-sm font-semibold text-white">{creator.username}</p>
+                      <p className="text-sm font-semibold text-white flex items-center gap-1">
+                        {creator.username}
+                        {creator.isDemo && (
+                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                        )}
+                      </p>
                       <p className="text-xs text-bags font-mono">${creator.token.symbol}</p>
                     </div>
                   </div>
@@ -216,7 +227,12 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
               <div className="flex items-center gap-3">
                 <CreatorAvatar seed={selectedCreator.id ?? selectedCreator.username} alt={selectedCreator.username} size={36} />
                 <div>
-                  <p className="font-bold text-white">{selectedCreator.username}</p>
+                  <p className="font-bold text-white flex items-center gap-1.5">
+                    {selectedCreator.username}
+                    {selectedCreator.isDemo && (
+                      <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                    )}
+                  </p>
                   <p className="text-xs text-gray-400">{selectedCreator.memeCount} memes</p>
                 </div>
               </div>
