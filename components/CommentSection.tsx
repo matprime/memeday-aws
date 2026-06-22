@@ -79,7 +79,7 @@ export function CommentSection({ memeId, initialComments, onCommentAdded }: Prop
           {comments.map((c) => {
             const seed = c.walletAddr ?? c.userId;
             const short = `${seed.slice(0, 4)}…${seed.slice(-4)}`;
-            const avatar = `https://api.dicebear.com/8.x/bottts/svg?seed=${seed}`;
+            const avatar = `https://api.dicebear.com/8.x/bottts/png?seed=${seed}`;
             const fallback = `https://api.dicebear.com/8.x/identicon/png?seed=${encodeURIComponent(seed)}&size=32&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
             return (
               <div key={c.id} className="flex gap-3">

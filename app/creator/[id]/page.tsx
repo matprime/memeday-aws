@@ -22,7 +22,7 @@ export default async function CreatorPage({ params }: Props) {
 
   const seed = user?.walletAddr ?? userId;
   const username = `${userId.slice(0, 4)}...${userId.slice(-4)}`;
-  const avatarUrl = `https://api.dicebear.com/8.x/bottts/svg?seed=${seed}`;
+  const avatarUrl = `https://api.dicebear.com/8.x/bottts/png?seed=${seed}`;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
