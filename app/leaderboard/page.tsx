@@ -13,8 +13,8 @@ import {
   Zap,
   Crown,
 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
+import { CreatorAvatar } from "@/components/CreatorAvatar";
 
 export default function LeaderboardPage() {
   const creators = getTopCreators();
@@ -49,12 +49,11 @@ export default function LeaderboardPage() {
                 <div className="text-3xl">{medals[i]}</div>
                 <Link href={`/creator/${creator.id}`} className="flex flex-col items-center gap-2 group">
                   <div className="relative">
-                    <Image
-                      src={creator.avatarUrl}
+                    <CreatorAvatar
+                      seed={creator.id ?? creator.username}
                       alt={creator.username}
-                      width={i === 0 ? 64 : 52}
-                      height={i === 0 ? 64 : 52}
-                      className="rounded-full bg-gray-800 border-2 border-gold/30 group-hover:border-gold/70 transition-colors"
+                      size={i === 0 ? 64 : 52}
+                      className="border-2 border-gold/30 group-hover:border-gold/70 transition-colors"
                     />
                     {i === 0 && (
                       <Crown
@@ -107,12 +106,10 @@ export default function LeaderboardPage() {
                 <span className="text-gray-600 font-bold w-5 text-sm">
                   {i + 1}
                 </span>
-                <Image
-                  src={creator.avatarUrl}
+                <CreatorAvatar
+                  seed={creator.id ?? creator.username}
                   alt={creator.username}
-                  width={36}
-                  height={36}
-                  className="rounded-full bg-gray-800"
+                  size={36}
                 />
                 <div>
                   <Link

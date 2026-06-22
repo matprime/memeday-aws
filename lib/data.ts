@@ -5,7 +5,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-1",
     walletAddress: "7xKs...Bg3P",
     username: "MemeLord9000",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme1",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme1",
     bio: "Professional meme archaeologist. Trading volatility for vibes.",
     bagsProjectId: "bags-proj-001",
     token: {
@@ -25,7 +25,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-2",
     walletAddress: "3mNq...Xx7R",
     username: "CryptoJester",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme2",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme2",
     bio: "If it's not on-chain, did it even happen?",
     bagsProjectId: "bags-proj-002",
     token: {
@@ -45,7 +45,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-3",
     walletAddress: "9pQw...Lk2V",
     username: "PepeMaximalist",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme3",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme3",
     bio: "Every market cycle needs its prophet. I am the frog.",
     bagsProjectId: "bags-proj-003",
     token: {
@@ -65,7 +65,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-4",
     walletAddress: "2aYt...Wc9F",
     username: "SolanaShaman",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme4",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme4",
     bio: "400ms TPS goes brrr. Memes are my consensus mechanism.",
     bagsProjectId: "bags-proj-004",
     token: {
@@ -85,7 +85,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-5",
     walletAddress: "5bZr...Mn4H",
     username: "DegenQueen",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme5",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme5",
     bio: "Exit liquidity is a mindset, not a strategy.",
     bagsProjectId: "bags-proj-005",
     token: {
@@ -126,7 +126,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c1",
         authorId: "creator-2",
         authorUsername: "CryptoJester",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme2",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme2",
         body: "This hits different at 3am while watching confirmations",
         postedAt: daysAgo(0),
       },
@@ -134,7 +134,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c2",
         authorId: "creator-1",
         authorUsername: "MemeLord9000",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme1",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme1",
         body: "PEPE token to the moon though 🚀",
         postedAt: daysAgo(0),
       },
@@ -156,7 +156,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c3",
         authorId: "creator-5",
         authorUsername: "DegenQueen",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme5",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme5",
         body: "My therapist actually bought $MLRD so she's part of the problem now",
         postedAt: daysAgo(0),
       },
@@ -195,7 +195,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c4",
         authorId: "creator-4",
         authorUsername: "SolanaShaman",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme4",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme4",
         body: "Blessed be the 400ms block time",
         postedAt: daysAgo(2),
       },
@@ -310,7 +310,7 @@ export function creatorFromDbUser(
     username: walletAddr
       ? `${walletAddr.slice(0, 4)}...${walletAddr.slice(-4)}`
       : `${userId.slice(0, 8)}...`,
-    avatarUrl: `https://api.dicebear.com/8.x/identicon/svg?seed=${seed}`,
+    avatarUrl: `https://api.dicebear.com/8.x/identicon/png?seed=${seed}`,
     bio: "Meme creator on Solana",
     bagsProjectId: bagsProjectId ?? `mock-${userId.slice(0, 8)}`,
     token: {
