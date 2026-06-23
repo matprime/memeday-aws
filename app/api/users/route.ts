@@ -10,7 +10,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { email, walletAddr, displayName, authMethods, bagsProjectId, creatorTokenAddr } = body;
+    const { email, walletAddr, displayName, authMethods, bagsProjectId, creatorTokenAddr, creatorTokenSymbol } = body;
 
     const user = await upsertUser({
       userId,
@@ -20,6 +20,7 @@ export async function POST(req: Request) {
       authMethods,
       bagsProjectId,
       creatorTokenAddr,
+      creatorTokenSymbol,
     });
 
     return NextResponse.json({ user });

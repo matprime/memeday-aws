@@ -11,7 +11,7 @@ function dicebearPngUrl(seed: string, size: number) {
   });
 
   // PNG is more reliable than SVG with various image pipelines.
-  return `https://api.dicebear.com/8.x/identicon/png?${params.toString()}`;
+  return `https://api.dicebear.com/8.x/bottts/png?${params.toString()}`;
 }
 
 export function CreatorAvatar({

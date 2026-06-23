@@ -5,7 +5,7 @@ export const MOCK_CREATORS: Creator[] = [
     id: "creator-1",
     walletAddress: "7xKs...Bg3P",
     username: "MemeLord9000",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme1",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme1",
     bio: "Professional meme archaeologist. Trading volatility for vibes.",
     bagsProjectId: "bags-proj-001",
     token: {
@@ -20,12 +20,13 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 47,
     joinedAt: "2024-01-15T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-2",
     walletAddress: "3mNq...Xx7R",
     username: "CryptoJester",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme2",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme2",
     bio: "If it's not on-chain, did it even happen?",
     bagsProjectId: "bags-proj-002",
     token: {
@@ -40,12 +41,13 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 29,
     joinedAt: "2024-02-20T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-3",
     walletAddress: "9pQw...Lk2V",
     username: "PepeMaximalist",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme3",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme3",
     bio: "Every market cycle needs its prophet. I am the frog.",
     bagsProjectId: "bags-proj-003",
     token: {
@@ -60,12 +62,13 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 83,
     joinedAt: "2023-11-05T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-4",
     walletAddress: "2aYt...Wc9F",
     username: "SolanaShaman",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme4",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme4",
     bio: "400ms TPS goes brrr. Memes are my consensus mechanism.",
     bagsProjectId: "bags-proj-004",
     token: {
@@ -80,12 +83,13 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 21,
     joinedAt: "2024-03-10T00:00:00Z",
+    isDemo: true,
   },
   {
     id: "creator-5",
     walletAddress: "5bZr...Mn4H",
     username: "DegenQueen",
-    avatarUrl: "https://api.dicebear.com/8.x/bottts/svg?seed=meme5",
+    avatarUrl: "https://api.dicebear.com/8.x/bottts/png?seed=meme5",
     bio: "Exit liquidity is a mindset, not a strategy.",
     bagsProjectId: "bags-proj-005",
     token: {
@@ -100,6 +104,7 @@ export const MOCK_CREATORS: Creator[] = [
     },
     memeCount: 61,
     joinedAt: "2024-01-28T00:00:00Z",
+    isDemo: true,
   },
 ];
 
@@ -126,7 +131,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c1",
         authorId: "creator-2",
         authorUsername: "CryptoJester",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme2",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme2",
         body: "This hits different at 3am while watching confirmations",
         postedAt: daysAgo(0),
       },
@@ -134,7 +139,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c2",
         authorId: "creator-1",
         authorUsername: "MemeLord9000",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme1",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme1",
         body: "PEPE token to the moon though 🚀",
         postedAt: daysAgo(0),
       },
@@ -156,7 +161,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c3",
         authorId: "creator-5",
         authorUsername: "DegenQueen",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme5",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme5",
         body: "My therapist actually bought $MLRD so she's part of the problem now",
         postedAt: daysAgo(0),
       },
@@ -195,7 +200,7 @@ export const MOCK_MEMES: Meme[] = [
         id: "c4",
         authorId: "creator-4",
         authorUsername: "SolanaShaman",
-        authorAvatar: "https://api.dicebear.com/8.x/bottts/svg?seed=meme4",
+        authorAvatar: "https://api.dicebear.com/8.x/bottts/png?seed=meme4",
         body: "Blessed be the 400ms block time",
         postedAt: daysAgo(2),
       },
@@ -277,6 +282,12 @@ export const getTopCreators = () =>
     (a, b) => b.token.totalVolume - a.token.totalVolume
   );
 
+export const getTopCreatorsByMemeCount = () =>
+  [...MOCK_CREATORS].sort((a, b) => b.memeCount - a.memeCount);
+
+export const getMemesByCreator = (creatorId: string) =>
+  MOCK_MEMES.filter((m) => m.creatorId === creatorId);
+
 export const getTrendingTokens = () =>
   [...MOCK_CREATORS].sort(
     (a, b) => b.token.priceChange24h - a.token.priceChange24h
@@ -296,13 +307,31 @@ function walletHash(seed: string): number {
 export function creatorFromDbUser(
   user: DbUser & { memeCount: number; joinedAt: string }
 ): Creator {
-  const { userId, walletAddr, bagsProjectId, memeCount, joinedAt } = user;
+  const { userId, walletAddr, bagsProjectId, creatorTokenSymbol, memeCount, joinedAt } = user;
   const seed = walletAddr ?? userId;
   const h = walletHash(seed);
-  const price = parseFloat(((h % 80 + 5) / 1000).toFixed(4));
-  const holders = (h % 180) + memeCount * 5 + 5;
-  const totalVolume = parseFloat((memeCount * ((h % 8) + 1)).toFixed(1));
-  const symbol = seed.slice(0, 4).toUpperCase();
+
+  const token = creatorTokenSymbol
+    ? {
+        symbol: creatorTokenSymbol,
+        name: `${creatorTokenSymbol} Token`,
+        price: 0.001,
+        priceChange24h: 0,
+        holders: 0,
+        totalVolume: 0,
+        marketCap: 0,
+        spiking: false,
+      }
+    : {
+        symbol: seed.slice(0, 4).toUpperCase(),
+        name: `${seed.slice(0, 4).toUpperCase()} Token`,
+        price: parseFloat(((h % 80 + 5) / 1000).toFixed(4)),
+        priceChange24h: parseFloat(((h % 50) - 10).toFixed(1)),
+        holders: (h % 180) + memeCount * 5 + 5,
+        totalVolume: parseFloat((memeCount * ((h % 8) + 1)).toFixed(1)),
+        marketCap: parseFloat((((h % 80 + 5) / 1000) * ((h % 180) + memeCount * 5 + 5) * 0.1).toFixed(2)),
+        spiking: h % 4 === 0,
+      };
 
   return {
     id: userId,
@@ -310,19 +339,10 @@ export function creatorFromDbUser(
     username: walletAddr
       ? `${walletAddr.slice(0, 4)}...${walletAddr.slice(-4)}`
       : `${userId.slice(0, 8)}...`,
-    avatarUrl: `https://api.dicebear.com/8.x/identicon/svg?seed=${seed}`,
+    avatarUrl: `https://api.dicebear.com/8.x/identicon/png?seed=${seed}`,
     bio: "Meme creator on Solana",
     bagsProjectId: bagsProjectId ?? `mock-${userId.slice(0, 8)}`,
-    token: {
-      symbol,
-      name: `${symbol} Token`,
-      price,
-      priceChange24h: parseFloat(((h % 50) - 10).toFixed(1)),
-      holders,
-      totalVolume,
-      marketCap: parseFloat((price * holders * 0.1).toFixed(2)),
-      spiking: h % 4 === 0,
-    },
+    token,
     memeCount,
     joinedAt,
   };

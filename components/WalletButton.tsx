@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Wallet, LogOut } from "lucide-react";
 
-export function WalletButton() {
+export function WalletButton({ userId }: { userId?: string | null }) {
   const { publicKey, disconnect, connecting } = useWallet();
   const { setVisible } = useWalletModal();
 
@@ -13,9 +14,18 @@ export function WalletButton() {
     const short = `${addr.slice(0, 4)}...${addr.slice(-4)}`;
     return (
       <div className="flex items-center gap-2">
-        <span className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50">
-          {short}
-        </span>
+        {userId ? (
+          <Link
+            href={`/creator/${userId}`}
+            className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50 hover:text-white transition-colors"
+          >
+            {short}
+          </Link>
+        ) : (
+          <span className="text-xs text-purple-300 bg-purple-900/30 px-3 py-1.5 rounded-full border border-purple-700/50">
+            {short}
+          </span>
+        )}
         <button
           onClick={disconnect}
           className="text-gray-400 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-red-900/20"

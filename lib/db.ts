@@ -57,6 +57,7 @@ function parseUser(item: Record<string, unknown>): DbUser {
     authMethods: (item.authMethods as string[]) ?? [],
     bagsProjectId: item.bagsProjectId as string | undefined,
     creatorTokenAddr: item.creatorTokenAddr as string | undefined,
+    creatorTokenSymbol: item.creatorTokenSymbol as string | undefined,
     credScore: (item.credScore as number) ?? 0,
     createdAt: item.createdAt as string,
   };
@@ -247,6 +248,7 @@ export async function upsertUser(user: {
   authMethods?: string[];
   bagsProjectId?: string;
   creatorTokenAddr?: string;
+  creatorTokenSymbol?: string;
 }): Promise<DbUser> {
   const now = new Date().toISOString();
 
@@ -284,6 +286,10 @@ export async function upsertUser(user: {
     updateExpr += ", creatorTokenAddr = :creatorTokenAddr";
     exprVals[":creatorTokenAddr"] = user.creatorTokenAddr;
   }
+  if (user.creatorTokenSymbol !== undefined) {
+    updateExpr += ", creatorTokenSymbol = :creatorTokenSymbol";
+    exprVals[":creatorTokenSymbol"] = user.creatorTokenSymbol;
+  }
 
   const result = await dynamo.send(
     new UpdateCommand({
@@ -309,6 +315,20 @@ export async function getUserById(userId: string): Promise<DbUser | null> {
   );
   if (!result.Item) return null;
   return parseUser(result.Item as Record<string, unknown>);
+}
+
+export async function getAllUsers(): Promise<DbUser[]> {
+  noStore();
+  const result = await dynamo.send(
+    new ScanCommand({
+      TableName: TABLE,
+      FilterExpression: "begins_with(PK, :up) AND begins_with(SK, :up)",
+      ExpressionAttributeValues: { ":up": "USER#" },
+    })
+  );
+  return (result.Items ?? []).map((item) =>
+    parseUser(item as Record<string, unknown>)
+  );
 }
 
 // Query GSI2 to look up a user by linked wallet address.
