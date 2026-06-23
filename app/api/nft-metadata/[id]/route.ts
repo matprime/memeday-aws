@@ -26,6 +26,7 @@ export async function GET(
 
   return NextResponse.json({
     name: row.name,
+    symbol: "MDAY",
     description: row.description,
     image: row.image_url,
     properties: {
