@@ -13,7 +13,6 @@ import {
   Zap,
   Crown,
 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 
 export default function LeaderboardPage() {
@@ -49,12 +48,18 @@ export default function LeaderboardPage() {
                 <div className="text-3xl">{medals[i]}</div>
                 <Link href={`/creator/${creator.id}`} className="flex flex-col items-center gap-2 group">
                   <div className="relative">
-                    <Image
+                    <img
                       src={creator.avatarUrl}
                       alt={creator.username}
                       width={i === 0 ? 64 : 52}
                       height={i === 0 ? 64 : 52}
-                      className="rounded-full bg-gray-800 border-2 border-gold/30 group-hover:border-gold/70 transition-colors"
+                      loading="lazy"
+                      className="rounded-full bg-gray-800 border-2 border-gold/30 group-hover:border-gold/70 transition-colors object-cover"
+                      onError={(e) => {
+                        const size = i === 0 ? 64 : 52;
+                        const params = new URLSearchParams({ seed: creator.id, size: String(size), backgroundColor: "b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf" });
+                        (e.currentTarget as HTMLImageElement).src = `https://api.dicebear.com/8.x/identicon/png?${params}`;
+                      }}
                     />
                     {i === 0 && (
                       <Crown
@@ -107,12 +112,17 @@ export default function LeaderboardPage() {
                 <span className="text-gray-600 font-bold w-5 text-sm">
                   {i + 1}
                 </span>
-                <Image
+                <img
                   src={creator.avatarUrl}
                   alt={creator.username}
                   width={36}
                   height={36}
-                  className="rounded-full bg-gray-800"
+                  loading="lazy"
+                  className="rounded-full bg-gray-800 object-cover"
+                  onError={(e) => {
+                    const params = new URLSearchParams({ seed: creator.id, size: "36", backgroundColor: "b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf" });
+                    (e.currentTarget as HTMLImageElement).src = `https://api.dicebear.com/8.x/identicon/png?${params}`;
+                  }}
                 />
                 <div>
                   <Link

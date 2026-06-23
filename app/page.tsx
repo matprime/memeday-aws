@@ -4,8 +4,6 @@ import { MemeCard } from "@/components/MemeCard";
 import { TrendingTokenCard } from "@/components/TrendingTokenCard";
 import { Flame, Zap, Trophy } from "lucide-react";
 import Link from "next/link";
-import { PoweredByBagsBadge } from "@/components/BagsToast";
-
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
@@ -18,7 +16,7 @@ export default async function HomePage() {
       <section className="text-center space-y-4 py-4">
         <div className="inline-flex items-center gap-2 bg-bags/10 border border-bags/30 text-bags text-sm font-bold px-4 py-2 rounded-full mb-2">
           <Flame size={16} />
-          Meme of the Day — Powered by Bags
+          MemeDay
         </div>
         <h1 className="text-4xl sm:text-5xl font-black text-white leading-tight">
           The Creator Economy
@@ -28,7 +26,7 @@ export default async function HomePage() {
           </span>
         </h1>
         <p className="text-gray-400 max-w-xl mx-auto text-lg">
-          Post memes. Earn tokens. Invest in creators. All on Solana, all via Bags.
+          Post memes. Earn tokens. Invest in creators. Your likes are worth something now.
         </p>
         <div className="flex items-center justify-center gap-3 pt-2">
           <Link
@@ -54,9 +52,8 @@ export default async function HomePage() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-black text-white flex items-center gap-2">
                   <Flame size={20} className="text-bags" />
-                  Meme of the Day
+                  Featured Meme
                 </h2>
-                <PoweredByBagsBadge />
               </div>
               <div className="max-w-xl">
                 <MemeCard meme={memeOfDay} featured commentCount={memeOfDay.commentCount} />

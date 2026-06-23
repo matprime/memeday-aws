@@ -1,11 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
+    unoptimized: process.env.NODE_ENV === "development",
     remotePatterns: [
       { protocol: "https", hostname: "picsum.photos" },
       { protocol: "https", hostname: "i.imgflip.com" },
       { protocol: "https", hostname: "api.dicebear.com" },
-      { protocol: "https", hostname: "yaclaluunagvsqsyayje.supabase.co" },
+      ...(process.env.CLOUDFRONT_DOMAIN
+        ? [{ protocol: "https", hostname: process.env.CLOUDFRONT_DOMAIN }]
+        : []),
     ],
   },
 };
