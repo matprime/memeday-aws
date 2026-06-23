@@ -83,10 +83,14 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
           )}
         </div>
 
-        {/* Row 1: Tip Creator + Buy Meme NFT — equal width */}
+        {/* Row 1: Tip Creator + Buy Meme — equal width */}
         <div className="grid grid-cols-2 gap-3">
           <button
-            onClick={() => setTipOpen(true)}
+            onClick={() =>
+              meme.creatorWalletAddr
+                ? setTipOpen(true)
+                : addToast("Tipping is only available for wallet-based creators", "error")
+            }
             className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors"
           >
             <Gift size={16} />
@@ -94,20 +98,29 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
           </button>
 
           <button
+            onClick={() =>
+              meme.creatorWalletAddr
+                ? addToast("Meme purchase coming soon!", "success")
+                : addToast("Buying is only available for wallet-registered meme owners", "error")
+            }
             className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors"
           >
             <ShoppingBag size={16} />
-            Buy Meme NFT
+            Buy Meme
           </button>
         </div>
 
-        {/* Row 2: Trade meme token — full width */}
+        {/* Row 2: Trade creator token — full width */}
         <button
-          onClick={() => setInvestOpen(true)}
+          onClick={() =>
+            creator.walletAddress && creator.bagsProjectId
+              ? setInvestOpen(true)
+              : addToast("Trading is only available for wallet-based creators with Bags tokens", "error")
+          }
           className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white bg-orange-500 hover:bg-orange-600 transition-all hover:scale-[1.02] active:scale-[0.98]"
         >
           <Zap size={16} />
-          Trade meme token
+          Trade creator token
         </button>
       </div>
 

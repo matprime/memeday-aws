@@ -4,6 +4,7 @@ import Link from "next/link";
 import { getMemeById, getComments, getUserById } from "@/lib/db";
 import { Creator } from "@/lib/types";
 import { MemePageClient } from "@/components/MemePageClient";
+import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -76,13 +77,11 @@ export default async function MemePage({ params }: Props) {
 
       <div className="flex items-center justify-between mb-6">
         <Link href={`/creator/${meme.creatorId}`} className="flex items-center gap-3 group">
-          <Image
-            src={creator.avatarUrl}
+          <CreatorAvatar
+            seed={meme.creatorId}
             alt={creator.username}
-            width={44}
-            height={44}
-            className="rounded-full bg-gray-800 border-2 border-border group-hover:border-accent/50 transition-colors object-cover"
-            unoptimized
+            size={44}
+            className="border-2 border-border group-hover:border-accent/50 transition-colors"
           />
           <div>
             <p className="font-bold text-white font-mono group-hover:text-accent-light transition-colors">
