@@ -71,11 +71,6 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
             fill
             className="object-contain transition-transform duration-500 group-hover:scale-105"
           />
-          {meme.nftMint && meme.listingPrice && (
-            <div className="absolute top-2 right-2 bg-black/70 backdrop-blur-sm border border-accent/50 text-accent-light text-xs font-bold px-2 py-0.5 rounded-lg">
-              NFT · {meme.listingPrice} SOL
-            </div>
-          )}
         </div>
       </Link>
 
@@ -105,7 +100,11 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
                 ? "text-accent-light border-accent/40 bg-accent/10"
                 : "text-gray-500 border-border/60 bg-bg/60"
             }`}>
-              {meme.nftMint ? "NFT" : "Standard"}
+              {meme.nftMint
+                ? meme.listingPrice
+                  ? `NFT · ${meme.listingPrice} SOL`
+                  : "NFT"
+                : "Standard"}
             </span>
             <p className="text-xs text-gray-500">
               {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
@@ -113,7 +112,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/50">
+        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-border/50">
           <button
             onClick={handleVote}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
