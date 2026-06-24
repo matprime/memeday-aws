@@ -1,5 +1,6 @@
 import { unstable_noStore as noStore } from "next/cache";
 import {
+  BatchGetCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -82,6 +83,20 @@ export async function getMemes(): Promise<DbMeme[]> {
 
 export async function getMemeOfDay(): Promise<DbMeme | null> {
   noStore();
+  // Read from FEED#GLOBAL materialized view (score-desc sort), fall back to scan
+  const feedResult = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": "FEED#GLOBAL" },
+      ScanIndexForward: false,
+      Limit: 1,
+    })
+  );
+  const top = feedResult.Items?.[0];
+  if (top?.memeId) return getMemeById(top.memeId as string);
+
+  // Feed not yet populated (pre-Lambda); fall back to live scan
   const memes = await getMemes();
   if (memes.length === 0) return null;
   return memes.reduce((best, m) => (m.score > best.score ? m : best), memes[0]);
@@ -327,6 +342,42 @@ export async function getAllUsers(): Promise<DbUser[]> {
     })
   );
   return (result.Items ?? []).map((item) =>
+    parseUser(item as Record<string, unknown>)
+  );
+}
+
+export interface DbLeaderboardEntry {
+  creatorId: string;
+  memeCount: number;
+}
+
+export async function getLeaderboard(): Promise<DbLeaderboardEntry[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": "LEADERBOARD#GLOBAL" },
+    })
+  );
+  return (result.Items ?? []).map((item) => ({
+    creatorId: item.creatorId as string,
+    memeCount: (item.memeCount as number) ?? 0,
+  }));
+}
+
+export async function getUsersByIds(userIds: string[]): Promise<DbUser[]> {
+  if (userIds.length === 0) return [];
+  const result = await dynamo.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [TABLE]: {
+          Keys: userIds.map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` })),
+        },
+      },
+    })
+  );
+  return (result.Responses?.[TABLE] ?? []).map((item) =>
     parseUser(item as Record<string, unknown>)
   );
 }

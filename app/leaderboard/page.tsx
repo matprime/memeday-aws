@@ -1,35 +1,36 @@
-import { getAllUsers, getMemesByCreator } from "@/lib/db";
+import { getLeaderboard, getUsersByIds, getMemesByCreator } from "@/lib/db";
 import { MOCK_CREATORS, MOCK_MEMES, creatorFromDbUser } from "@/lib/data";
 import { Creator } from "@/lib/types";
 import { LeaderboardClient } from "./LeaderboardClient";
 
 export default async function LeaderboardPage() {
-  // Fetch real app users and their meme counts
   let dbCreators: Creator[] = [];
+
   try {
-    const users = await getAllUsers();
-    dbCreators = await Promise.all(
-      users.map(async (user) => {
-        const memes = await getMemesByCreator(user.userId);
-        return creatorFromDbUser({
-          ...user,
-          memeCount: memes.length,
-          joinedAt: user.createdAt,
-        });
+    // 2 DB calls instead of 1 + N: leaderboard view + batch user fetch
+    const entries = await getLeaderboard();
+    const users = await getUsersByIds(entries.map((e) => e.creatorId));
+    const memeCountById = Object.fromEntries(entries.map((e) => [e.creatorId, e.memeCount]));
+
+    dbCreators = users.map((user) =>
+      creatorFromDbUser({
+        ...user,
+        memeCount: memeCountById[user.userId] ?? 0,
+        joinedAt: user.createdAt,
       })
     );
   } catch {
     // DB unavailable — fall through to mock-only
   }
 
-  // Merge: mock creators first, then real users (skip any that collide by id)
+  // Merge: mock creators first, then real users (skip collisions by id)
   const mockIds = new Set(MOCK_CREATORS.map((c) => c.id));
   const merged: Creator[] = [
     ...MOCK_CREATORS,
     ...dbCreators.filter((c) => !mockIds.has(c.id)),
   ];
 
-  // Build a unified memes map for the modal: { creatorId -> [{id, imageUrl, caption, isNFT}] }
+  // Build memes map for creator modal
   const memesMap: Record<string, Array<{ id: string; imageUrl: string; caption: string; isNFT: boolean }>> = {};
 
   for (const meme of MOCK_MEMES) {
@@ -58,12 +59,8 @@ export default async function LeaderboardPage() {
     }
   }
 
-  const creatorsByVolume = [...merged].sort(
-    (a, b) => b.token.totalVolume - a.token.totalVolume
-  );
-  const creatorsByMemes = [...merged].sort(
-    (a, b) => b.memeCount - a.memeCount
-  );
+  const creatorsByVolume = [...merged].sort((a, b) => b.token.totalVolume - a.token.totalVolume);
+  const creatorsByMemes = [...merged].sort((a, b) => b.memeCount - a.memeCount);
 
   return (
     <LeaderboardClient
