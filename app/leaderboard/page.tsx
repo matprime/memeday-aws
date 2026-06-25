@@ -1,23 +1,22 @@
-import { getAllUsers, getMemesByCreator } from "@/lib/db";
+import { getLeaderboardCounts, getMemesByCreator, getUserById } from "@/lib/db";
 import { MOCK_CREATORS, MOCK_MEMES, creatorFromDbUser } from "@/lib/data";
 import { Creator } from "@/lib/types";
 import { LeaderboardClient } from "./LeaderboardClient";
 
 export default async function LeaderboardPage() {
-  // Fetch real app users and their meme counts
+  // Fetch creator meme counts from the leaderboard materialized view, then
+  // BatchGet the corresponding user records.
   let dbCreators: Creator[] = [];
   try {
-    const users = await getAllUsers();
-    dbCreators = await Promise.all(
-      users.map(async (user) => {
-        const memes = await getMemesByCreator(user.userId);
-        return creatorFromDbUser({
-          ...user,
-          memeCount: memes.length,
-          joinedAt: user.createdAt,
-        });
+    const counts = await getLeaderboardCounts();
+    const users = await Promise.all(counts.map((c) => getUserById(c.creatorId)));
+    dbCreators = counts
+      .map((c, i) => {
+        const user = users[i];
+        if (!user) return null;
+        return creatorFromDbUser({ ...user, memeCount: c.memeCount, joinedAt: user.createdAt });
       })
-    );
+      .filter((c): c is Creator => c !== null);
   } catch {
     // DB unavailable — fall through to mock-only
   }
