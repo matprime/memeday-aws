@@ -89,7 +89,13 @@ export function PostMemeModal({ onClose }: Props) {
 
       // 1. Upload image to S3 via presigned URL
       setStep("uploading");
-      const { s3Key, imageUrl } = await uploadImage(selectedImage);
+      let s3Key: string;
+      let imageUrl: string;
+      try {
+        ({ s3Key, imageUrl } = await uploadImage(selectedImage));
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : "Image upload failed");
+      }
 
       // 2. Mint NFT on Solana devnet (Phantom will prompt for signature)
       let mintAddress: string | null = null;

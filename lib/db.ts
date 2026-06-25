@@ -1,5 +1,6 @@
 import { unstable_noStore as noStore } from "next/cache";
 import {
+  BatchGetCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -63,28 +64,68 @@ function parseUser(item: Record<string, unknown>): DbUser {
   };
 }
 
-// Scans for all base meme items (PK=MEME#* SK=MEME#*).
-// In production, the global feed would be served from the FEED#GLOBAL
-// materialized view written by Lambda Streams. For the Vercel layer, scan suffices.
+// Query FEED#GLOBAL via GSI3 (createdAt desc = newest first), BatchGet full items.
 export async function getMemes(): Promise<DbMeme[]> {
   noStore();
-  const result = await dynamo.send(
-    new ScanCommand({
+  const feedResult = await dynamo.send(
+    new QueryCommand({
       TableName: TABLE,
-      FilterExpression: "begins_with(PK, :mp) AND begins_with(SK, :mp)",
-      ExpressionAttributeValues: { ":mp": "MEME#" },
+      IndexName: "GSI3",
+      KeyConditionExpression: "GSI3PK = :pk",
+      ExpressionAttributeValues: { ":pk": "FEED#GLOBAL" },
+      ScanIndexForward: false,
     })
   );
-  return (result.Items ?? [])
+  const items = feedResult.Items ?? [];
+  if (items.length === 0) return [];
+
+  const keys = items.map((item) => ({
+    PK: `MEME#${item.memeId as string}`,
+    SK: `MEME#${item.memeId as string}`,
+  }));
+  const batchResult = await dynamo.send(
+    new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
+  );
+  return (batchResult.Responses?.[TABLE] ?? [])
     .map((item) => parseMeme(item as Record<string, unknown>))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+// Query FEED#GLOBAL base table (score desc = highest score first), GetItem for full details.
 export async function getMemeOfDay(): Promise<DbMeme | null> {
   noStore();
-  const memes = await getMemes();
-  if (memes.length === 0) return null;
-  return memes.reduce((best, m) => (m.score > best.score ? m : best), memes[0]);
+  const feedResult = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": "FEED#GLOBAL" },
+      ScanIndexForward: false,
+      Limit: 1,
+    })
+  );
+  const top = feedResult.Items?.[0];
+  if (!top) return null;
+  return getMemeById(top.memeId as string);
+}
+
+// Query LEADERBOARD#GLOBAL for meme counts per creator.
+export async function getLeaderboardCounts(): Promise<
+  { creatorId: string; memeCount: number }[]
+> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": "LEADERBOARD#GLOBAL" },
+    })
+  );
+  return (result.Items ?? [])
+    .map((item) => ({
+      creatorId: item.creatorId as string,
+      memeCount: (item.memeCount as number) ?? 0,
+    }))
+    .sort((a, b) => b.memeCount - a.memeCount);
 }
 
 export async function getMemeById(id: string): Promise<DbMeme | null> {

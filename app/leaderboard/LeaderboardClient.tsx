@@ -186,16 +186,18 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
                 >
                   <div className="col-span-2 flex items-center gap-3">
                     <span className="text-gray-600 font-bold w-5 text-sm">{i + 1}</span>
-                    <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={36} />
-                    <div>
-                      <p className="text-sm font-semibold text-white flex items-center gap-1">
-                        {creator.username}
-                        {creator.isDemo && (
-                          <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
-                        )}
-                      </p>
-                      <p className="text-xs text-bags font-mono">${creator.token.symbol}</p>
-                    </div>
+                    <Link href={`/creator/${creator.id}`} className="flex items-center gap-3 group/creator">
+                      <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={36} />
+                      <div>
+                        <p className="text-sm font-semibold text-white group-hover/creator:text-accent-light transition-colors flex items-center gap-1">
+                          {creator.username}
+                          {creator.isDemo && (
+                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-bags font-mono">${creator.token.symbol}</p>
+                      </div>
+                    </Link>
                   </div>
                   <span className="text-sm font-semibold text-white">
                     {creator.memeCount.toLocaleString()}

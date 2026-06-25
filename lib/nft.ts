@@ -9,7 +9,8 @@ import {
 import { generateSigner, percentAmount } from "@metaplex-foundation/umi";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 
-const DEVNET_RPC = "https://api.devnet.solana.com";
+const DEVNET_RPC =
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 const MAX_ON_CHAIN_URI_LEN = 200;
 
 async function registerMetadataUri(
@@ -57,22 +58,34 @@ export async function mintMemeNft(
   imageUrl: string,
   caption: string
 ): Promise<string> {
+  if (!wallet.connected || !wallet.publicKey) {
+    throw new Error("Wallet not connected — reconnect Phantom and try again.");
+  }
+
   const metadataUri = await registerMetadataUri(imageUrl, caption);
 
-  // Mint NFT on devnet — Phantom will prompt the user to sign
   const umi = createUmi(DEVNET_RPC)
     .use(mplTokenMetadata())
     .use(walletAdapterIdentity(wallet as any));
 
   const mint = generateSigner(umi);
-  await createNft(umi, {
-    mint,
-    name: caption.slice(0, 32),
-    symbol: "MDAY",
-    uri: metadataUri,
-    sellerFeeBasisPoints: percentAmount(5),
-    isMutable: false,
-  }).sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
+  try {
+    await createNft(umi, {
+      mint,
+      name: caption.slice(0, 32),
+      symbol: "MDAY",
+      uri: metadataUri,
+      sellerFeeBasisPoints: percentAmount(5),
+      isMutable: false,
+    }).sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
+  } catch (err) {
+    if (err instanceof TypeError && err.message === "Failed to fetch") {
+      throw new Error(
+        `Solana devnet unreachable — check your connection or set NEXT_PUBLIC_SOLANA_RPC_URL to a private RPC endpoint.`
+      );
+    }
+    throw err;
+  }
 
   return mint.publicKey.toString();
 }
