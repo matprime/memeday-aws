@@ -71,11 +71,6 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
             fill
             className="object-contain transition-transform duration-500 group-hover:scale-105"
           />
-          {meme.nftMint && meme.listingPrice && (
-            <div className="absolute top-2 right-2 bg-black/70 backdrop-blur-sm border border-accent/50 text-accent-light text-xs font-bold px-2 py-0.5 rounded-lg">
-              NFT · {meme.listingPrice} SOL
-            </div>
-          )}
         </div>
       </Link>
 
@@ -105,7 +100,11 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
                 ? "text-accent-light border-accent/40 bg-accent/10"
                 : "text-gray-500 border-border/60 bg-bg/60"
             }`}>
-              {meme.nftMint ? "NFT" : "Standard"}
+              {meme.nftMint
+                ? meme.listingPrice
+                  ? `NFT · ${meme.listingPrice} SOL`
+                  : "NFT"
+                : "Standard"}
             </span>
             <p className="text-xs text-gray-500">
               {formatDistanceToNow(new Date(meme.createdAt), { addSuffix: true })}
@@ -113,51 +112,53 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/50">
-          <button
-            onClick={handleVote}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-              hasVoted
-                ? "bg-accent/20 text-accent-light border border-accent/50"
-                : "bg-bg/60 text-gray-400 hover:text-white hover:bg-white/10 border border-border/50"
-            }`}
-          >
-            <ArrowUp size={14} />
-            {votes.toLocaleString()}
-          </button>
-
-          <Link
-            href={`/meme/${meme.id}#comments`}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white bg-bg/60 hover:bg-white/10 border border-border/50 transition-colors"
-          >
-            <MessageCircle size={14} />
-            {commentCount}
-          </Link>
-
-          {meme.nftMint && meme.status === "listed" && (
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => addToast("NFT purchase coming soon!", "success")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-accent-light bg-bg/60 hover:bg-accent/10 border border-border/50 hover:border-accent/50 transition-colors"
+              onClick={handleVote}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                hasVoted
+                  ? "bg-accent/20 text-accent-light border border-accent/50"
+                  : "bg-bg/60 text-gray-400 hover:text-white hover:bg-white/10 border border-border/50"
+              }`}
             >
-              <ShoppingCart size={14} />
-              Buy
+              <ArrowUp size={14} />
+              {votes.toLocaleString()}
             </button>
-          )}
 
-          <button
-            onClick={() => setTipOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors"
-          >
-            <Gift size={14} />
-            Tip
-          </button>
+            <Link
+              href={`/meme/${meme.id}#comments`}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white bg-bg/60 hover:bg-white/10 border border-border/50 transition-colors"
+            >
+              <MessageCircle size={14} />
+              {commentCount}
+            </Link>
+
+            {meme.nftMint && meme.status === "listed" && (
+              <button
+                onClick={() => addToast("NFT purchase coming soon!", "success")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-accent-light bg-bg/60 hover:bg-accent/10 border border-border/50 hover:border-accent/50 transition-colors"
+              >
+                <ShoppingCart size={14} />
+                Buy
+              </button>
+            )}
+
+            <button
+              onClick={() => setTipOpen(true)}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-500 hover:bg-green-600 text-white transition-colors"
+            >
+              <Gift size={14} />
+              Tip
+            </button>
+          </div>
 
           <button
             onClick={() => addToast("Creator token investing coming soon via Bags!", "bags")}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-bags bg-bags/10 hover:bg-bags/20 border border-bags/30 hover:border-bags/60 transition-all hover:scale-105"
+            className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold text-bags bg-bags/10 hover:bg-bags/20 border border-bags/30 hover:border-bags/60 transition-all"
           >
-            <Zap size={12} />
-            Invest
+            <Zap size={14} />
+            Invest in creator&apos;s token
           </button>
         </div>
       </div>
