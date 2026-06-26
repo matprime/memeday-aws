@@ -38,12 +38,12 @@ export function TrendingTokenCard({ creator, rank }: Props) {
                   <span className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
                 )}
               </p>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-bags font-mono font-bold truncate">
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-bags font-mono font-bold shrink-0">
                   ${creator.token.symbol}
                 </p>
                 {creator.token.spiking && (
-                  <div className="shrink-0 flex items-center gap-1 bg-hot/15 border border-hot/40 text-hot text-[10px] font-bold px-1.5 py-0.5 rounded-md animate-pulse">
+                  <div className="shrink-0 flex items-center gap-1 bg-hot/15 border border-hot/40 text-hot text-[10px] font-bold px-1.5 py-0.5 rounded-md animate-pulse leading-none">
                     <AlertTriangle size={9} />
                     BUY SPIKE
                   </div>
