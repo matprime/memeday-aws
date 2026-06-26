@@ -54,7 +54,7 @@ export function TrendingTokenCard({ creator, rank }: Props) {
         </div>
 
         <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="text-center">
+          <div className="text-left">
             <p className="text-xs text-gray-500 mb-0.5">Price</p>
             <p className="text-sm font-bold text-white font-mono">
               {creator.token.price} SOL
