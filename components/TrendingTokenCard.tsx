@@ -25,21 +25,21 @@ export function TrendingTokenCard({ creator, rank }: Props) {
             : "border-border hover:border-accent/50 hover:shadow-accent/10"
         }`}
       >
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl font-black text-gray-600 w-7 text-center">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <span className="text-2xl font-black text-gray-600 w-7 text-center shrink-0">
               {rank}
             </span>
-            <Link href={`/creator/${creator.id}`} className="flex items-center gap-2">
+            <Link href={`/creator/${creator.id}`} className="flex items-center gap-2 min-w-0">
               <CreatorAvatar seed={creator.id ?? creator.username} alt={creator.username} size={40} />
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold text-white text-sm group-hover:text-accent-light transition-colors flex items-center gap-1">
-                  {creator.username}
+                  <span className="truncate">{creator.username}</span>
                   {creator.isDemo && (
-                    <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
+                    <span className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 leading-none">DEMO</span>
                   )}
                 </p>
-                <p className="text-xs text-bags font-mono font-bold">
+                <p className="text-xs text-bags font-mono font-bold truncate">
                   ${creator.token.symbol}
                 </p>
               </div>
@@ -48,7 +48,7 @@ export function TrendingTokenCard({ creator, rank }: Props) {
 
           {/* Spike badge */}
           {creator.token.spiking && (
-            <div className="flex items-center gap-1 bg-hot/15 border border-hot/40 text-hot text-xs font-bold px-2 py-1 rounded-lg animate-pulse">
+            <div className="shrink-0 flex items-center gap-1 bg-hot/15 border border-hot/40 text-hot text-xs font-bold px-2 py-1 rounded-lg animate-pulse">
               <AlertTriangle size={10} />
               BUY SPIKE
             </div>
