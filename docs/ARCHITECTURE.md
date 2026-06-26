@@ -1,7 +1,5 @@
-# MemeDay Architecture (v11)
+# MemeDay Architecture
 
-Reference for Claude Code. Derived from `memeday_architecture_v11.svg` and
-`memeday_dynamodb_single_table.svg`.
 DynamoDB single-table primary store (single-region today; Global Tables
 planned), Vercel + Lambda hybrid compute, S3 media (CloudFront-ready),
 Streams-driven materialized views, Cognito identity provider (email +
@@ -50,7 +48,7 @@ data model" below for the full schema.
 - `EMAIL#` and `WALLET#` lookups are sparse GSI entries (see GSI1 / GSI2).
 
 ### On-chain : Solana
-- Solana devnet (live demo): NFT mints via Metaplex, Solana Pay tips.
+- Solana: NFT mints via Metaplex, Solana Pay tips.
 - Bags.fm: MOCKED (simulated SDK). Mainnet, post-deadline only. The single
   simulated link in the diagram.
 
