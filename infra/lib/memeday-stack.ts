@@ -2,9 +2,12 @@ import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import { Construct } from "constructs";
 
 export class MemeDayStack extends cdk.Stack {
@@ -106,5 +109,47 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
     new cdk.CfnOutput(this, "StreamHandlerArn", {
       value: streamHandler.functionArn,
     });
+
+    // --- S3 bucket + image validation handler ---
+    const bucket = new s3.Bucket(this, "MemeDayBucket", {
+      removalPolicy,
+      autoDeleteObjects: !isProd,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: ["*"],
+          allowedHeaders: ["*"],
+          maxAge: 3000,
+        },
+      ],
+    });
+
+    const s3Handler = new NodejsFunction(this, "S3Handler", {
+      entry: path.join(__dirname, "../../lambdas/s3-handler/index.ts"),
+      projectRoot: path.join(__dirname, "../.."),
+      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        S3_BUCKET_NAME: bucket.bucketName,
+      },
+    });
+
+    s3Handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:DeleteObject"],
+        resources: [`${bucket.bucketArn}/*`],
+      })
+    );
+
+    bucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new LambdaDestination(s3Handler)
+    );
+
+    new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
+    new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
   }
 }
