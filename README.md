@@ -27,7 +27,7 @@ The flywheel: engagement drives value, value drives engagement.
 
 ## Tech stack
 
-Next.js 14 (App Router), TypeScript, Tailwind CSS, AWS CDK, DynamoDB, S3, Amazon Cognito, @solana/web3.js, Solana Wallet Adapter, Solana Pay, Bags SDK, Metaplex, Zustand
+AWS CDK, Amazon DynamoDB, AWS Lambda, Amazon S3, Amazon Cognito, Vercel, v0, Next.js 14 (app router), React, TypeScript, Tailwind CSS, Zustand, lucide-react, qrcode.react, @solana/web3.js, Solana Wallet Adapter, Solana Pay, Metaplex
 
 ## AWS infrastructure
 
