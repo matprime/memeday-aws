@@ -3,19 +3,24 @@ import * as cdk from "aws-cdk-lib";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Construct } from "constructs";
 
+export interface MemeDayStackProps extends cdk.StackProps {
+  stage: "prod" | "dev";
+}
+
 export class MemeDayStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: MemeDayStackProps) {
     super(scope, id, props);
 
-    const isProd = this.node.tryGetContext("prod") !== "false";
+    const isProd = props.stage === "prod";
     const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
     const table = new dynamodb.Table(this, "MemeDayTable", {
-      tableName: "MemeDay",
+      tableName: isProd ? "MemeDay" : "MemeDayDev",
       partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -48,7 +53,7 @@ export class MemeDayStack extends cdk.Stack {
     // Email must NOT be a username attribute or required — wallet-only sign-up
     // is valid (see CLAUDE.md: email OR wallet alone).
     const userPool = new cognito.UserPool(this, "MemeDayUserPool", {
-      userPoolName: "MemeDay",
+      userPoolName: isProd ? "MemeDay" : "MemeDayDev",
       selfSignUpEnabled: true,
       signInAliases: { username: true, email: true },
       autoVerify: { email: true },
@@ -106,5 +111,16 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
     new cdk.CfnOutput(this, "StreamHandlerArn", {
       value: streamHandler.functionArn,
     });
+
+    // Dev-only: prod's media bucket lives outside CDK and must stay untouched.
+    // Outputs below are dev-only to keep the prod template unchanged.
+    if (!isProd) {
+      const mediaBucket = new s3.Bucket(this, "MediaBucket", {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      });
+      new cdk.CfnOutput(this, "BucketName", { value: mediaBucket.bucketName });
+      new cdk.CfnOutput(this, "Region", { value: this.region });
+    }
   }
 }
