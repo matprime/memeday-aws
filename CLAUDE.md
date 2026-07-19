@@ -4,7 +4,7 @@ Architecture reference: see `docs/ARCHITECTURE.md`. Read it before changing data
 Auth (Cognito is the only identity system):
 - `userId` IS the Cognito `sub`. Do not generate your own user IDs.
 - Sign-up needs email OR wallet alone (either is valid); link the other later. Never require both.
-- Wallet login is a Cognito custom-auth challenge (sign nonce: Cognito verifies: JWT session). Do not build a separate or parallel wallet/JWT session system alongside Cognito.
+- Wallet login: client signs a server-issued nonce, the /api/auth/wallet/verify API route verifies the Solana signature, then Cognito issues the session via admin-initiated auth (ADMIN_USER_PASSWORD_AUTH). Do not build a separate or parallel wallet/JWT session system alongside Cognito.
 
 # Behavioral guidelines to reduce common LLM coding mistakes
 Merge with project-specific instructions as needed. **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.

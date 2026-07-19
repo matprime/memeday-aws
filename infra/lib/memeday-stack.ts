@@ -10,15 +10,19 @@ import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import { Construct } from "constructs";
 
+export interface MemeDayStackProps extends cdk.StackProps {
+  stage: "prod" | "dev";
+}
+
 export class MemeDayStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: MemeDayStackProps) {
     super(scope, id, props);
 
-    const isProd = this.node.tryGetContext("prod") !== "false";
+    const isProd = props.stage === "prod";
     const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
     const table = new dynamodb.Table(this, "MemeDayTable", {
-      tableName: "MemeDay",
+      tableName: isProd ? "MemeDay" : "MemeDayDev",
       partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -51,7 +55,7 @@ export class MemeDayStack extends cdk.Stack {
     // Email must NOT be a username attribute or required — wallet-only sign-up
     // is valid (see CLAUDE.md: email OR wallet alone).
     const userPool = new cognito.UserPool(this, "MemeDayUserPool", {
-      userPoolName: "MemeDay",
+      userPoolName: isProd ? "MemeDay" : "MemeDayDev",
       selfSignUpEnabled: true,
       signInAliases: { username: true, email: true },
       autoVerify: { email: true },
@@ -110,46 +114,51 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
       value: streamHandler.functionArn,
     });
 
-    // --- S3 bucket + image validation handler ---
-    const bucket = new s3.Bucket(this, "MemeDayBucket", {
-      removalPolicy,
-      autoDeleteObjects: !isProd,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      cors: [
-        {
-          allowedMethods: [s3.HttpMethods.PUT],
-          allowedOrigins: ["*"],
-          allowedHeaders: ["*"],
-          maxAge: 3000,
+    // Dev-only: prod's media bucket lives outside CDK and must stay untouched.
+    // Outputs below are dev-only to keep the prod template unchanged.
+    if (!isProd) {
+      // --- S3 bucket + image validation handler ---
+      const bucket = new s3.Bucket(this, "MemeDayBucket", {
+        removalPolicy,
+        autoDeleteObjects: true,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        cors: [
+          {
+            allowedMethods: [s3.HttpMethods.PUT],
+            allowedOrigins: ["*"],
+            allowedHeaders: ["*"],
+            maxAge: 3000,
+          },
+        ],
+      });
+
+      const s3Handler = new NodejsFunction(this, "S3Handler", {
+        entry: path.join(__dirname, "../../lambdas/s3-handler/index.ts"),
+        projectRoot: path.join(__dirname, "../.."),
+        depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        environment: {
+          S3_BUCKET_NAME: bucket.bucketName,
         },
-      ],
-    });
+      });
 
-    const s3Handler = new NodejsFunction(this, "S3Handler", {
-      entry: path.join(__dirname, "../../lambdas/s3-handler/index.ts"),
-      projectRoot: path.join(__dirname, "../.."),
-      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
-      handler: "handler",
-      runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(30),
-      environment: {
-        S3_BUCKET_NAME: bucket.bucketName,
-      },
-    });
+      s3Handler.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["s3:DeleteObject"],
+          resources: [`${bucket.bucketArn}/*`],
+        })
+      );
 
-    s3Handler.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ["s3:DeleteObject"],
-        resources: [`${bucket.bucketArn}/*`],
-      })
-    );
+      bucket.addEventNotification(
+        s3.EventType.OBJECT_CREATED,
+        new LambdaDestination(s3Handler)
+      );
 
-    bucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new LambdaDestination(s3Handler)
-    );
-
-    new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
-    new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
+      new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
+      new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
+      new cdk.CfnOutput(this, "Region", { value: this.region });
+    }
   }
 }

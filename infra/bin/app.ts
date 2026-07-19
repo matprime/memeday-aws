@@ -13,4 +13,10 @@ const region: string =
 
 new MemeDayStack(app, "MemeDayStack", {
   env: { region },
+  stage: "prod",
+});
+
+new MemeDayStack(app, "MemeDayDev", {
+  env: { region },
+  stage: "dev",
 });

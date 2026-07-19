@@ -13,3 +13,4 @@ CLAUDE.md
 cdk.out/
 infra/dist/
 HANDOFF.md
+*.tsbuildinfo

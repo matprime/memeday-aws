@@ -10,6 +10,9 @@ import type { DynamoDBStreamHandler } from "aws-lambda";
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+// TODO(post-judging): drop the "MemeDay" fallback and fail loud on missing env
+// (kept for now — removing it changes the bundled asset hash and breaks the
+// zero-diff freeze on the prod stack during H0 judging).
 const TABLE = process.env.DYNAMODB_TABLE_NAME ?? "MemeDay";
 
 // Zero-pad to 15 digits so DynamoDB lexicographic sort == numeric sort for scores.
