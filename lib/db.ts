@@ -1,6 +1,7 @@
 import { unstable_noStore as noStore } from "next/cache";
 import {
   BatchGetCommand,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -9,7 +10,9 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
-import type { DbComment, DbMeme, DbUser } from "./types";
+import type { DbComment, DbMeme, DbPendingUpload, DbUser } from "./types";
+
+const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN ?? "";
 
@@ -34,6 +37,19 @@ function parseMeme(item: Record<string, unknown>): DbMeme {
     commentCount: (item.commentCount as number) ?? 0,
     score: (item.score as number) ?? 0,
     listingPrice: item.listingPrice as number | undefined,
+    createdAt: item.createdAt as string,
+  };
+}
+
+function parsePendingUpload(item: Record<string, unknown>): DbPendingUpload {
+  return {
+    id: item.pendingId as string,
+    creatorId: item.creatorId as string,
+    creatorWalletAddr: item.creatorWalletAddr as string | undefined,
+    s3Key: item.s3Key as string,
+    caption: item.caption as string,
+    status: item.status as DbPendingUpload["status"],
+    reason: item.reason as string | undefined,
     createdAt: item.createdAt as string,
   };
 }
@@ -159,6 +175,76 @@ export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
   );
 }
 
+// Created before the S3 presigned URL is issued so the S3-triggered validation
+// Lambda has a record to update (see lambdas/s3-handler). expiresAt is a
+// DynamoDB TTL attribute (dev-stack only) that sweeps stale/rejected entries.
+export async function createPendingUpload(pending: {
+  id: string;
+  creatorId: string;
+  creatorWalletAddr?: string;
+  s3Key: string;
+  caption: string;
+}): Promise<DbPendingUpload> {
+  const now = new Date().toISOString();
+  const item: Record<string, unknown> = {
+    PK: `PENDING#${pending.id}`,
+    SK: `PENDING#${pending.id}`,
+    pendingId: pending.id,
+    creatorId: pending.creatorId,
+    s3Key: pending.s3Key,
+    caption: pending.caption,
+    status: "pending_upload",
+    createdAt: now,
+    expiresAt: Math.floor(Date.now() / 1000) + PENDING_UPLOAD_TTL_SECONDS,
+  };
+  if (pending.creatorWalletAddr) item.creatorWalletAddr = pending.creatorWalletAddr;
+
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
+  return parsePendingUpload(item);
+}
+
+export async function getPendingUpload(id: string): Promise<DbPendingUpload | null> {
+  noStore();
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` },
+    })
+  );
+  if (!result.Item) return null;
+  return parsePendingUpload(result.Item as Record<string, unknown>);
+}
+
+async function deletePendingUpload(id: string): Promise<void> {
+  await dynamo.send(
+    new DeleteCommand({
+      TableName: TABLE,
+      Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` },
+    })
+  );
+}
+
+// Turns a validated (status: "active") pending upload into a real, feed-visible
+// Meme item, then removes the pending record. Callers must check
+// pending.status === "active" first (see app/api/memes POST).
+export async function finalizeMeme(
+  pending: DbPendingUpload,
+  extra: { nftMint?: string; listingPrice?: number; isNFT: boolean }
+): Promise<DbMeme> {
+  const meme = await createMeme({
+    creatorId: pending.creatorId,
+    creatorWalletAddr: pending.creatorWalletAddr,
+    s3Key: pending.s3Key,
+    caption: pending.caption,
+    nftMint: extra.nftMint,
+    listingPrice: extra.listingPrice,
+    isNFT: extra.isNFT,
+    id: pending.id,
+  });
+  await deletePendingUpload(pending.id);
+  return meme;
+}
+
 export async function createMeme(meme: {
   creatorId: string;
   creatorWalletAddr?: string;
@@ -167,8 +253,9 @@ export async function createMeme(meme: {
   nftMint?: string;
   listingPrice?: number;
   isNFT: boolean;
+  id?: string;
 }): Promise<DbMeme> {
-  const id = randomUUID();
+  const id = meme.id ?? randomUUID();
   const now = new Date().toISOString();
   const status: DbMeme["status"] = meme.listingPrice ? "listed" : "active";
 

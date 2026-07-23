@@ -44,7 +44,7 @@ jobs:
 
       - name: Integration test - S3 handler (dev stack)
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        run: ./scripts/test-s3-handler.sh MemeDayDev
+        run: ./scripts/test-s3-upload-handler.sh MemeDayDev
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

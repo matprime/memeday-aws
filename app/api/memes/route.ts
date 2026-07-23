@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/cognito";
-import { createMeme, getUserById } from "@/lib/db";
+import { finalizeMeme, getPendingUpload } from "@/lib/db";
 
 export async function POST(req: Request) {
   const userId = await getUserIdFromRequest(req);
@@ -10,19 +10,29 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { s3Key, caption, isNFT, nftMint, listingPrice } = body;
+    const { pendingId, isNFT, nftMint, listingPrice } = body;
 
-    if (!s3Key || !caption) {
-      return NextResponse.json({ error: "s3Key and caption are required" }, { status: 400 });
+    if (!pendingId) {
+      return NextResponse.json({ error: "pendingId is required" }, { status: 400 });
     }
 
-    // Denormalize creator wallet for Solana Pay tips
-    const creator = await getUserById(userId);
-    const meme = await createMeme({
-      creatorId: userId,
-      creatorWalletAddr: creator?.walletAddr,
-      s3Key,
-      caption,
+    // Re-check server-side: only a pending upload the S3Handler Lambda has
+    // already validated (status: "active") may become a real, feed-visible meme.
+    const pending = await getPendingUpload(pendingId);
+    if (!pending || pending.creatorId !== userId) {
+      return NextResponse.json({ error: "Pending upload not found" }, { status: 404 });
+    }
+    if (pending.status === "rejected") {
+      return NextResponse.json(
+        { error: `Upload rejected: ${pending.reason ?? "invalid file"}` },
+        { status: 422 }
+      );
+    }
+    if (pending.status !== "active") {
+      return NextResponse.json({ error: "Upload still being validated" }, { status: 425 });
+    }
+
+    const meme = await finalizeMeme(pending, {
       nftMint: nftMint ?? undefined,
       listingPrice: listingPrice ?? undefined,
       isNFT: isNFT ?? false,

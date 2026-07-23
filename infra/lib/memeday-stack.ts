@@ -28,6 +28,9 @@ export class MemeDayStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       removalPolicy,
+      // Dev-only: sweeps stale/rejected PENDING# upload records after 24h.
+      // Omitted for prod (undefined) to keep the prod table definition unchanged.
+      timeToLiveAttribute: isProd ? undefined : "expiresAt",
     });
 
     // GSI1: creator's memes — GSI1PK = USER#<creatorId>
@@ -139,21 +142,34 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_20_X,
         timeout: cdk.Duration.seconds(30),
+        // sharp needs headroom to decode/re-encode up to 4096x4096 images.
+        memorySize: 512,
         environment: {
           S3_BUCKET_NAME: bucket.bucketName,
+          DYNAMODB_TABLE_NAME: table.tableName,
+        },
+        // sharp ships a native binary — install it into the bundle rather than
+        // letting esbuild try to inline it. Local build host is linux x64,
+        // matching the default Lambda architecture, so no cross-compile needed.
+        bundling: {
+          nodeModules: ["sharp"],
         },
       });
 
+      // Least-privilege: only /uploads/*, no wildcard bucket resource.
       s3Handler.addToRolePolicy(
         new iam.PolicyStatement({
-          actions: ["s3:DeleteObject"],
-          resources: [`${bucket.bucketArn}/*`],
+          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          resources: [`${bucket.bucketArn}/uploads/*`],
         })
       );
 
+      table.grantReadWriteData(s3Handler);
+
       bucket.addEventNotification(
         s3.EventType.OBJECT_CREATED,
-        new LambdaDestination(s3Handler)
+        new LambdaDestination(s3Handler),
+        { prefix: "uploads/" }
       );
 
       new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
