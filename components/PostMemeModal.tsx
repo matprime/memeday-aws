@@ -26,7 +26,7 @@ export function PostMemeModal({ onClose }: Props) {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<"form" | "uploading" | "minting" | "creating">("form");
+  const [step, setStep] = useState<"form" | "uploading" | "validating" | "minting" | "creating">("form");
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,20 +64,43 @@ export function PostMemeModal({ onClose }: Props) {
     handleFile(e.dataTransfer.files?.[0] ?? null);
   };
 
-  const uploadImage = async (file: File): Promise<{ s3Key: string; imageUrl: string }> => {
+  const uploadImage = async (
+    file: File,
+    caption: string
+  ): Promise<{ pendingId: string; imageUrl: string }> => {
     const ext = file.name.split(".").pop() ?? "jpg";
-    const urlRes = await fetch(`/api/upload-url?ext=${ext}`, {
-      headers: { Authorization: `Bearer ${cognitoToken}` },
-    });
+    const urlRes = await fetch(
+      `/api/upload-url?ext=${ext}&caption=${encodeURIComponent(caption)}`,
+      { headers: { Authorization: `Bearer ${cognitoToken}` } }
+    );
     if (!urlRes.ok) throw new Error("Failed to get upload URL");
-    const { presignedUrl, s3Key, imageUrl } = await urlRes.json();
+    const { presignedUrl, pendingId, imageUrl } = await urlRes.json();
     const putRes = await fetch(presignedUrl, {
       method: "PUT",
       body: file,
       headers: { "Content-Type": file.type },
     });
     if (!putRes.ok) throw new Error("Image upload failed");
-    return { s3Key, imageUrl };
+    return { pendingId, imageUrl };
+  };
+
+  // The S3Handler Lambda validates the upload asynchronously (fires on the S3
+  // ObjectCreated event). Poll until it flips the pending record to active or
+  // rejected before proceeding — the meme can't be finalized until then.
+  const waitForValidation = async (pendingId: string): Promise<void> => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const res = await fetch(`/api/upload-status/${pendingId}`, {
+        headers: { Authorization: `Bearer ${cognitoToken}` },
+      });
+      if (!res.ok) throw new Error("Failed to check upload status");
+      const { status, reason } = await res.json();
+      if (status === "active") return;
+      if (status === "rejected") {
+        throw new Error(reason ? `Upload rejected: ${reason}` : "Upload rejected");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    throw new Error("Upload validation timed out — please try again");
   };
 
   const handleSubmit = async () => {
@@ -89,13 +112,17 @@ export function PostMemeModal({ onClose }: Props) {
 
       // 1. Upload image to S3 via presigned URL
       setStep("uploading");
-      let s3Key: string;
+      let pendingId: string;
       let imageUrl: string;
       try {
-        ({ s3Key, imageUrl } = await uploadImage(selectedImage));
+        ({ pendingId, imageUrl } = await uploadImage(selectedImage, caption.trim()));
       } catch (err) {
         throw new Error(err instanceof Error ? err.message : "Image upload failed");
       }
+
+      // 1b. Wait for the S3Handler Lambda to validate the upload
+      setStep("validating");
+      await waitForValidation(pendingId);
 
       // 2. Mint NFT on Solana devnet (Phantom will prompt for signature)
       let mintAddress: string | null = null;
@@ -149,8 +176,7 @@ export function PostMemeModal({ onClose }: Props) {
           Authorization: `Bearer ${cognitoToken}`,
         },
         body: JSON.stringify({
-          s3Key,
-          caption: caption.trim(),
+          pendingId,
           isNFT,
           nftMint: mintAddress ?? undefined,
           listingPrice: isNFT ? parseFloat(nftPrice) : undefined,
@@ -172,6 +198,7 @@ export function PostMemeModal({ onClose }: Props) {
 
   const stepLabel =
     step === "uploading" ? "Uploading image…" :
+    step === "validating" ? "Validating image…" :
     step === "minting" ? "Minting NFT on Solana… (approve in Phantom)" :
     "Creating on Bags & posting…";
 

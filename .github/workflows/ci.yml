@@ -1,31 +1,39 @@
 name: CI - Test & Build
+
 on:
   push:
     branches: [ "main", "develop" ]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::409415529750:role/memeday-ci-dev-oidc
           aws-region: eu-west-1
+
       - name: Install dependencies
         run: npm install
+
       - name: Run linter
         run: npm run lint
+
       - name: Run unit tests
         run: npm test
         env:
@@ -33,9 +41,10 @@ jobs:
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
           WALLET_AUTH_SECRET: ${{ secrets.WALLET_AUTH_SECRET }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
           CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+
       - name: Build
         run: npm run build
         env:
@@ -46,3 +55,7 @@ jobs:
           WALLET_AUTH_SECRET: ${{ secrets.WALLET_AUTH_SECRET }}
           CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+      - name: Integration test - S3 handler (dev stack)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        run: ./scripts/test-s3-upload-handler.sh MemeDayDev

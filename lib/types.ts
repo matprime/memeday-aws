@@ -88,6 +88,17 @@ export interface DbMeme {
   createdAt: string;
 }
 
+export interface DbPendingUpload {
+  id: string;               // also the future memeId once finalized
+  creatorId: string;        // Cognito sub
+  creatorWalletAddr?: string;
+  s3Key: string;
+  caption: string;
+  status: "pending_upload" | "active" | "rejected";
+  reason?: string;          // set when status = "rejected"
+  createdAt: string;
+}
+
 export interface DbComment {
   id: string;
   memeId: string;

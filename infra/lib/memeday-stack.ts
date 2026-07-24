@@ -2,10 +2,12 @@ import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import { Construct } from "constructs";
 
 export interface MemeDayStackProps extends cdk.StackProps {
@@ -26,6 +28,9 @@ export class MemeDayStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       removalPolicy,
+      // Dev-only: sweeps stale/rejected PENDING# upload records after 24h.
+      // Omitted for prod (undefined) to keep the prod table definition unchanged.
+      timeToLiveAttribute: isProd ? undefined : "expiresAt",
     });
 
     // GSI1: creator's memes — GSI1PK = USER#<creatorId>
@@ -115,11 +120,60 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
     // Dev-only: prod's media bucket lives outside CDK and must stay untouched.
     // Outputs below are dev-only to keep the prod template unchanged.
     if (!isProd) {
-      const mediaBucket = new s3.Bucket(this, "MediaBucket", {
+      // --- S3 bucket + image validation handler ---
+      const bucket = new s3.Bucket(this, "MemeDayBucket", {
+        removalPolicy,
+        autoDeleteObjects: true,
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        cors: [
+          {
+            allowedMethods: [s3.HttpMethods.PUT],
+            allowedOrigins: ["*"],
+            allowedHeaders: ["*"],
+            maxAge: 3000,
+          },
+        ],
       });
-      new cdk.CfnOutput(this, "BucketName", { value: mediaBucket.bucketName });
+
+      const s3Handler = new NodejsFunction(this, "S3Handler", {
+        entry: path.join(__dirname, "../../lambdas/s3-handler/index.ts"),
+        projectRoot: path.join(__dirname, "../.."),
+        depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        // sharp needs headroom to decode/re-encode up to 4096x4096 images.
+        memorySize: 512,
+        environment: {
+          S3_BUCKET_NAME: bucket.bucketName,
+          DYNAMODB_TABLE_NAME: table.tableName,
+        },
+        // sharp ships a native binary — install it into the bundle rather than
+        // letting esbuild try to inline it. Local build host is linux x64,
+        // matching the default Lambda architecture, so no cross-compile needed.
+        bundling: {
+          nodeModules: ["sharp"],
+        },
+      });
+
+      // Least-privilege: only /uploads/*, no wildcard bucket resource.
+      s3Handler.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          resources: [`${bucket.bucketArn}/uploads/*`],
+        })
+      );
+
+      table.grantReadWriteData(s3Handler);
+
+      bucket.addEventNotification(
+        s3.EventType.OBJECT_CREATED,
+        new LambdaDestination(s3Handler),
+        { prefix: "uploads/" }
+      );
+
+      new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
+      new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
       new cdk.CfnOutput(this, "Region", { value: this.region });
     }
   }
