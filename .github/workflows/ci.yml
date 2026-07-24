@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -19,6 +22,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::409415529750:role/memeday-ci-dev-oidc
+          aws-region: eu-west-1
+
       - name: Install dependencies
         run: npm install
 
@@ -28,9 +37,6 @@ jobs:
       - name: Run unit tests
         run: npm test
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
           DYNAMODB_TABLE_NAME: ${{ secrets.DYNAMODB_TABLE_NAME }}
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
@@ -39,13 +45,17 @@ jobs:
           CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
-      - name: Build project
+      - name: Build
         run: npm run build
+        env:
+          DYNAMODB_TABLE_NAME: ${{ secrets.DYNAMODB_TABLE_NAME }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_CLIENT_ID: ${{ secrets.COGNITO_CLIENT_ID }}
+          WALLET_AUTH_SECRET: ${{ secrets.WALLET_AUTH_SECRET }}
+          CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
       - name: Integration test - S3 handler (dev stack)
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         run: ./scripts/test-s3-upload-handler.sh MemeDayDev
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
