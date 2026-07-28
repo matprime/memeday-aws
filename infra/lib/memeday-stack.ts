@@ -95,7 +95,7 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
       projectRoot: path.join(__dirname, "../.."),
       depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
       handler: "handler",
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
       environment: {
         DYNAMODB_TABLE_NAME: table.tableName,
@@ -140,7 +140,7 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
         projectRoot: path.join(__dirname, "../.."),
         depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
         handler: "handler",
-        runtime: lambda.Runtime.NODEJS_20_X,
+        runtime: lambda.Runtime.NODEJS_22_X,
         timeout: cdk.Duration.seconds(30),
         // sharp needs headroom to decode/re-encode up to 4096x4096 images.
         memorySize: 512,
