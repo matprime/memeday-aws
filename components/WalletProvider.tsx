@@ -6,7 +6,7 @@ import {
   WalletProvider as _WP,
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider as _WMP } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
+import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { useAppStore } from "@/lib/store";
 
 require("@solana/wallet-adapter-react-ui/styles.css");
