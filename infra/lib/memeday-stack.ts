@@ -5,6 +5,8 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
@@ -175,6 +177,16 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
       new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
       new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
       new cdk.CfnOutput(this, "Region", { value: this.region });
+
+// --- CloudFront: only public path to the media bucket (OAC, no public bucket policy) ---
+      const distribution = new cloudfront.Distribution(this, "MemeDayDistribution", {
+        defaultBehavior: {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+      });
+
+      new cdk.CfnOutput(this, "CloudFrontDomain", { value: distribution.distributionDomainName });
     }
   }
 }
