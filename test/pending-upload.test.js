@@ -6,11 +6,14 @@ const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { randomUUID } = require("node:crypto");
 
-const envPath = path.join(__dirname, "..", ".env");
-if (fs.existsSync(envPath)) {
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+// .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
+for (const envFile of [".env.local", ".env"]) {
+  const envPath = path.join(__dirname, "..", envFile);
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+    }
   }
 }
 
@@ -85,15 +88,38 @@ test("pending upload: valid path creates a real, feed-eligible meme", async (t) 
   pending = await getPendingUpload(id);
   assert.strictEqual(pending.status, "active", "Lambda flips status to active");
 
-  const meme = await finalizeMeme(pending, { isNFT: false });
-  assert.strictEqual(meme.status, "active", "finalized meme is active");
-  assert.strictEqual(meme.id, id, "meme id reuses the pending id (embedded in the S3 key)");
+  try {
+    const meme = await finalizeMeme(pending, { isNFT: false });
+    assert.strictEqual(meme.status, "active", "finalized meme is active");
+    assert.strictEqual(meme.id, id, "meme id reuses the pending id (embedded in the S3 key)");
 
-  const stored = await getMemeById(id);
-  assert.ok(stored, "meme is retrievable — this is what makes it feed-eligible via DynamoDB Streams");
+    const stored = await getMemeById(id);
+    assert.ok(stored, "meme is retrievable — this is what makes it feed-eligible via DynamoDB Streams");
 
-  const afterFinalize = await getPendingUpload(id);
-  assert.strictEqual(afterFinalize, null, "pending record is deleted once finalized");
+    const afterFinalize = await getPendingUpload(id);
+    assert.strictEqual(afterFinalize, null, "pending record is deleted once finalized");
+  } finally {
+    // Clean up the finalized meme (and its DynamoDB Streams-produced feed
+    // entry, once the stream-handler Lambda has had a chance to write it) so
+    // this test doesn't leave a "pending upload test" ghost entry in the feed.
+    const { DeleteCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+    // New memes always start with score: 0 (lib/db.ts createMeme), so the
+    // feed SK matches padScore(0) from lambdas/stream-handler/index.ts.
+    const feedSK = `${"0".repeat(15)}#${id}`;
+    for (let i = 0; i < 10; i++) {
+      const { Item } = await dynamo.send(
+        new GetCommand({ TableName: TABLE, Key: { PK: "FEED#GLOBAL", SK: feedSK } })
+      );
+      if (Item) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    await dynamo.send(
+      new DeleteCommand({ TableName: TABLE, Key: { PK: "FEED#GLOBAL", SK: feedSK } })
+    );
+    await dynamo.send(
+      new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${id}`, SK: `MEME#${id}` } })
+    );
+  }
 });
 
 test("pending upload: rejected path never produces a meme", async (t) => {

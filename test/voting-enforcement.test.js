@@ -6,11 +6,14 @@ const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 
 // Load .env so the DynamoDB client gets table name, region, and credentials.
-const envPath = path.join(__dirname, "..", ".env");
-if (fs.existsSync(envPath)) {
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+// .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
+for (const envFile of [".env.local", ".env"]) {
+  const envPath = path.join(__dirname, "..", envFile);
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+    }
   }
 }
 
