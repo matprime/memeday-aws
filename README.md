@@ -66,6 +66,10 @@ AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=eu-west-1
 
+# Comma-separated recipients for CloudWatch alarm emails (SNS).
+# Empty = topic deployed with no subscriptions (no alerts sent).
+ALERT_EMAILS=
+
 DYNAMODB_TABLE_NAME=MemeDay
 
 COGNITO_USER_POOL_ID=        # from cdk deploy output: UserPoolId
