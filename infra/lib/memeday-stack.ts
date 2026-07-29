@@ -5,6 +5,10 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
@@ -12,6 +16,7 @@ import { Construct } from "constructs";
 
 export interface MemeDayStackProps extends cdk.StackProps {
   stage: "prod" | "dev";
+  alertEmails: string[];
 }
 
 export class MemeDayStack extends cdk.Stack {
@@ -117,6 +122,35 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
       value: streamHandler.functionArn,
     });
 
+    // --- Alerting: SNS topic + CloudWatch alarms ---
+    // Distinct topic names per stage: both stacks share one account, so a
+    // literal "memeday-alerts" in both would collide.
+    const alertTopic = new sns.Topic(this, "AlertTopic", {
+      topicName: isProd ? "memeday-alerts" : "memeday-alerts-dev",
+      displayName: "MemeDay Alerts",
+    });
+    props.alertEmails.forEach((email) =>
+      alertTopic.addSubscription(new subs.EmailSubscription(email))
+    );
+    const alertAction = new cwActions.SnsAction(alertTopic);
+
+    this.addErrorsAlarm(streamHandler, "StreamHandler", alertAction);
+
+    // DynamoDB throttling (table + GSIs) — PAY_PER_REQUEST can still throttle.
+    new cloudwatch.Alarm(this, "TableThrottleAlarm", {
+      metric: table.metric("ThrottledRequests", {
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "MemeDay table throttled requests",
+    }).addAlarmAction(alertAction);
+
+    new cdk.CfnOutput(this, "AlertTopicArn", { value: alertTopic.topicArn });
+
     // Dev-only: prod's media bucket lives outside CDK and must stay untouched.
     // Outputs below are dev-only to keep the prod template unchanged.
     if (!isProd) {
@@ -172,9 +206,32 @@ const streamHandler = new NodejsFunction(this, "StreamHandler", {
         { prefix: "uploads/" }
       );
 
+      // S3Handler exists only in dev, so its alarm must stay inside this block.
+      this.addErrorsAlarm(s3Handler, "S3Handler", alertAction);
+
       new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
       new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
       new cdk.CfnOutput(this, "Region", { value: this.region });
     }
+  }
+
+  // Errors > 0 over a 5-minute window → notify. NOT_BREACHING keeps the alarm
+  // quiet when the function simply isn't invoked (no data ≠ error).
+  private addErrorsAlarm(
+    fn: NodejsFunction,
+    id: string,
+    action: cwActions.SnsAction
+  ) {
+    new cloudwatch.Alarm(this, `${id}ErrorsAlarm`, {
+      metric: fn.metricErrors({
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: `${id} Lambda reported errors`,
+    }).addAlarmAction(action);
   }
 }
