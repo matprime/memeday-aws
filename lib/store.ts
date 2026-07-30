@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { BagsEvent } from "./types";
 
 // Decodes the `sub` claim from a Cognito JWT without verifying the signature.
@@ -53,7 +54,9 @@ interface AppState {
   setMyBagsProject: (projectId: string, tokenSymbol: string) => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
   toasts: [],
   addToast: (message, type = "success") => {
     const id = Math.random().toString(36).slice(2);
@@ -113,4 +116,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   myTokenSymbol: null,
   setMyBagsProject: (projectId, tokenSymbol) =>
     set({ myBagsProjectId: projectId, myTokenSymbol: tokenSymbol }),
-}));
+    }),
+    {
+      name: "memeday-auth",
+      storage: createJSONStorage(() => localStorage),
+      // Only the Cognito session survives a refresh — everything else
+      // (toasts, bags events, votes cache) is session-scoped on purpose.
+      partialize: (s) => ({
+        cognitoToken: s.cognitoToken,
+        authMethod: s.authMethod,
+        authEmail: s.authEmail,
+      }),
+    }
+  )
+);
