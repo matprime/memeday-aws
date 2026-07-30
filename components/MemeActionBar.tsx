@@ -32,7 +32,10 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
       addToast("Login to vote", "error");
       return;
     }
-    if (hasVoted) return;
+    if (hasVoted) {
+      addToast("You already voted for this meme", "error");
+      return;
+    }
     voteOnMeme(userId, meme.id);
     setVotes((v) => v + 1);
     const res = await fetch(`/api/memes/${meme.id}/vote`, {
@@ -42,6 +45,12 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
     if (!res.ok) {
       addToast("Vote failed", "error");
       setVotes((v) => v - 1);
+      return;
+    }
+    const data = await res.json();
+    if (data.alreadyVoted) {
+      setVotes((v) => v - 1);
+      addToast("You already voted for this meme", "error");
     } else {
       addToast("Vote recorded!", "success");
     }

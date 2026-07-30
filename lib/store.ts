@@ -3,6 +3,19 @@
 import { create } from "zustand";
 import { BagsEvent } from "./types";
 
+// Decodes the `sub` claim from a Cognito JWT without verifying the signature.
+// Used only as a stable localStorage key — the server independently verifies
+// the token on every vote request, so this isn't a security boundary.
+function decodeJwtSub(token: string): string | null {
+  try {
+    const payload = token.split(".")[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json.sub === "string" ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 interface Toast {
   id: string;
   message: string;
@@ -67,12 +80,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   votedMemes: new Set(),
   hydrateVotedMemes: (userId) => {
-    if (!userId) {
+    const sub = userId ? decodeJwtSub(userId) : null;
+    if (!sub) {
       set({ votedMemes: new Set() });
       return;
     }
     try {
-      const raw = localStorage.getItem(`votedMemes:${userId}`);
+      const raw = localStorage.getItem(`votedMemes:${sub}`);
       const arr = raw ? (JSON.parse(raw) as unknown) : [];
       const ids = Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
       set({ votedMemes: new Set(ids) });
@@ -84,9 +98,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const next = new Set(s.votedMemes);
       next.add(memeId);
-      if (userId) {
+      const sub = userId ? decodeJwtSub(userId) : null;
+      if (sub) {
         try {
-          localStorage.setItem(`votedMemes:${userId}`, JSON.stringify(Array.from(next)));
+          localStorage.setItem(`votedMemes:${sub}`, JSON.stringify(Array.from(next)));
         } catch {
           // ignore storage errors (private mode / quota)
         }

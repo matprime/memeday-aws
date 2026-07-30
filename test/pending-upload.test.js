@@ -5,6 +5,7 @@ const path = require("node:path");
 const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { randomUUID } = require("node:crypto");
+const { hasAwsCredentials } = require("./helpers/aws-credentials");
 
 // .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
 for (const envFile of [".env.local", ".env"]) {
@@ -62,7 +63,7 @@ async function markRejected(dynamo, TABLE, id, reason) {
 }
 
 test("pending upload: valid path creates a real, feed-eligible meme", async (t) => {
-  if (!process.env.DYNAMODB_TABLE_NAME || !process.env.AWS_ACCESS_KEY_ID) {
+  if (!process.env.DYNAMODB_TABLE_NAME || !hasAwsCredentials()) {
     t.skip("Missing DYNAMODB_TABLE_NAME or AWS credentials");
     return;
   }
@@ -123,7 +124,7 @@ test("pending upload: valid path creates a real, feed-eligible meme", async (t) 
 });
 
 test("pending upload: rejected path never produces a meme", async (t) => {
-  if (!process.env.DYNAMODB_TABLE_NAME || !process.env.AWS_ACCESS_KEY_ID) {
+  if (!process.env.DYNAMODB_TABLE_NAME || !hasAwsCredentials()) {
     t.skip("Missing DYNAMODB_TABLE_NAME or AWS credentials");
     return;
   }

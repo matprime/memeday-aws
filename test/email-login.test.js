@@ -3,6 +3,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 const { registerHooks } = require("node:module");
+const { hasAwsCredentials } = require("./helpers/aws-credentials");
 
 // The route imports "next/server", which only resolves as "next/server.js"
 // under Node's ESM resolution (same trick as the voting test's next/cache stub).
@@ -28,7 +29,7 @@ for (const envFile of [".env.local", ".env"]) {
 }
 
 test("email auth: sign-in with email returns a Cognito token", async (t) => {
-  if (!process.env.COGNITO_USER_POOL_ID || !process.env.COGNITO_CLIENT_ID || !process.env.AWS_ACCESS_KEY_ID) {
+  if (!process.env.COGNITO_USER_POOL_ID || !process.env.COGNITO_CLIENT_ID || !hasAwsCredentials()) {
     t.skip("Missing Cognito config or AWS credentials");
     return;
   }

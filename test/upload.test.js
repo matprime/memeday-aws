@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
+const { hasAwsCredentials } = require("./helpers/aws-credentials");
 
 // Load .env so the S3 client gets bucket name, region, and credentials.
 // .env.local overrides .env, same precedence Next.js uses — dev bucket name lives there.
@@ -25,7 +26,7 @@ const PNG_1X1 = Buffer.from(
 
 test("upload: presigned PUT URL is generated and S3 accepts the upload", async (t) => {
   const bucket = process.env.S3_BUCKET_NAME;
-  if (!bucket || !process.env.AWS_ACCESS_KEY_ID) {
+  if (!bucket || !hasAwsCredentials()) {
     t.skip("Missing S3_BUCKET_NAME or AWS credentials");
     return;
   }
