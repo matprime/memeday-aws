@@ -11,7 +11,7 @@ import { formatDistanceToNow } from "date-fns";
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 function buildStubCreator(userId: string, walletAddr?: string | null, bagsProjectId?: string | null): Creator {
@@ -38,7 +38,8 @@ function buildStubCreator(userId: string, walletAddr?: string | null, bagsProjec
   };
 }
 
-export default async function MemePage({ params }: Props) {
+export default async function MemePage(props: Props) {
+  const params = await props.params;
   const [meme, comments] = await Promise.all([
     getMemeById(params.id),
     getComments(params.id),
