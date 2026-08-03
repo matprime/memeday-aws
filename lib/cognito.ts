@@ -25,7 +25,8 @@ export async function getUserIdFromRequest(req: Request): Promise<string | null>
   try {
     const payload = await getVerifier().verify(token);
     return payload.sub;
-  } catch {
+  } catch(err) {
+    console.error("Cognito verify failed:", err);
     return null;
   }
 }
