@@ -15,10 +15,8 @@ function imageMimeFromUrl(url: string): string {
   }
 }
 
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const row = await getNftMetadata(params.id);
   if (!row) {
     return NextResponse.json({ error: "not found" }, { status: 404 });

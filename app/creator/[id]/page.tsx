@@ -9,10 +9,11 @@ import { ImageIcon, Zap, BarChart3 } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
-export default async function CreatorPage({ params }: Props) {
+export default async function CreatorPage(props: Props) {
+  const params = await props.params;
   const userId = decodeURIComponent(params.id);
   const [user, memes] = await Promise.all([
     getUserById(userId),

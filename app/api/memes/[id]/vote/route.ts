@@ -2,10 +2,8 @@ import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/cognito";
 import { voteMeme } from "@/lib/db";
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const userId = await getUserIdFromRequest(req);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
