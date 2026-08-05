@@ -57,5 +57,46 @@ jobs:
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
       - name: Integration test - S3 handler (dev stack)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
         run: ./scripts/test-s3-upload-handler.sh MemeDayDev
+
+  # Fails while the deployed prod stack differs from this branch's infra
+  # definition. Merging to main auto-deploys the Vercel frontend but never
+  # deploys CDK, so without this gate prod can end up running new code against
+  # old infrastructure. Read-only role: this job can inspect prod, never change it.
+  prod-drift-check:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configure AWS credentials (read-only prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::409415529750:role/memeday-ci-prod-readonly
+          aws-region: eu-west-1
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install infra dependencies
+        run: npm ci
+        working-directory: infra
+
+      - name: Check prod stack is up to date
+        run: npx cdk diff MemeDayStack --fail
+        working-directory: infra
+        env:
+          AWS_REGION: eu-west-1
+          ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}

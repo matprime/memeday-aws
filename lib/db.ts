@@ -45,7 +45,6 @@ function parsePendingUpload(item: Record<string, unknown>): DbPendingUpload {
   return {
     id: item.pendingId as string,
     creatorId: item.creatorId as string,
-    creatorWalletAddr: item.creatorWalletAddr as string | undefined,
     s3Key: item.s3Key as string,
     caption: item.caption as string,
     status: item.status as DbPendingUpload["status"],
@@ -181,7 +180,6 @@ export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
 export async function createPendingUpload(pending: {
   id: string;
   creatorId: string;
-  creatorWalletAddr?: string;
   s3Key: string;
   caption: string;
 }): Promise<DbPendingUpload> {
@@ -197,8 +195,6 @@ export async function createPendingUpload(pending: {
     createdAt: now,
     expiresAt: Math.floor(Date.now() / 1000) + PENDING_UPLOAD_TTL_SECONDS,
   };
-  if (pending.creatorWalletAddr) item.creatorWalletAddr = pending.creatorWalletAddr;
-
   await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
   return parsePendingUpload(item);
 }
@@ -231,9 +227,14 @@ export async function finalizeMeme(
   pending: DbPendingUpload,
   extra: { nftMint?: string; listingPrice?: number; isNFT: boolean }
 ): Promise<DbMeme> {
+  // Read the creator here, not at presign time. The client upserts its user
+  // profile between requesting the upload URL and posting the meme, so an
+  // earlier read misses first-time creators and leaves the meme with no
+  // creator wallet, which makes it permanently untippable.
+  const creator = await getUserById(pending.creatorId);
   const meme = await createMeme({
     creatorId: pending.creatorId,
-    creatorWalletAddr: pending.creatorWalletAddr,
+    creatorWalletAddr: creator?.walletAddr,
     s3Key: pending.s3Key,
     caption: pending.caption,
     nftMint: extra.nftMint,
