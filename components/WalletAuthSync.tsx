@@ -11,6 +11,12 @@ export function WalletAuthSync() {
   const { cognitoToken, setCognitoToken, addToast } = useAppStore();
   const authInFlight = useRef(false);
   const prevWalletNameRef = useRef<string | null>(null);
+  // `connected` starts false and only flips true once wallet-adapter's
+  // autoConnect finishes reconnecting Phantom (async, on mount). Without this
+  // guard the disconnect-clear branch below fires on that transient initial
+  // false and wipes a persisted session before autoConnect gets a chance to
+  // restore it.
+  const hasConnectedRef = useRef(false);
 
   // Show feedback when user selects a wallet that isn't installed.
   // WalletProviderBase silently skips connect() for NotDetected wallets — onError never fires.
@@ -28,10 +34,14 @@ export function WalletAuthSync() {
   useEffect(() => {
     if (!connected) {
       // Only clear wallet-established sessions — an email session survives
-      // a wallet disconnect.
-      if (useAppStore.getState().authMethod === "wallet") setCognitoToken(null);
+      // a wallet disconnect. Skip until we've seen a real connect, so the
+      // pre-autoConnect transient false doesn't wipe a persisted session.
+      if (hasConnectedRef.current && useAppStore.getState().authMethod === "wallet") {
+        setCognitoToken(null);
+      }
       return;
     }
+    hasConnectedRef.current = true;
 
     if (!publicKey || !signMessage || cognitoToken || authInFlight.current) return;
 

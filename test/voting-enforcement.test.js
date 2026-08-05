@@ -4,13 +4,17 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
+const { hasAwsCredentials } = require("./helpers/aws-credentials");
 
 // Load .env so the DynamoDB client gets table name, region, and credentials.
-const envPath = path.join(__dirname, "..", ".env");
-if (fs.existsSync(envPath)) {
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+// .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
+for (const envFile of [".env.local", ".env"]) {
+  const envPath = path.join(__dirname, "..", envFile);
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+    }
   }
 }
 
@@ -34,7 +38,7 @@ registerHooks({
 });
 
 test("voting: server enforces one vote per user per meme", async (t) => {
-  if (!process.env.DYNAMODB_TABLE_NAME || !process.env.AWS_ACCESS_KEY_ID) {
+  if (!process.env.DYNAMODB_TABLE_NAME || !hasAwsCredentials()) {
     t.skip("Missing DYNAMODB_TABLE_NAME or AWS credentials");
     return;
   }

@@ -13,8 +13,8 @@ const EXT_TO_MIME: Record<string, string> = {
   webp: "image/webp",
 };
 
-// Expected key shape: <userId>/<timestamp>.<ext> — exactly two segments.
-const SAFE_KEY = /^[^/]+\/\d+\.(jpg|jpeg|png|gif|webp)$/i;
+// Expected key shape: uploads/<userId>/<pendingId>.<ext> (see app/api/upload-url).
+const SAFE_KEY = /^uploads\/[^/]+\/[^/]+\.(jpg|jpeg|png|gif|webp)$/i;
 
 export async function GET(
   _request: NextRequest,

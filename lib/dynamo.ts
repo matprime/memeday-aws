@@ -9,4 +9,8 @@ export const dynamo = DynamoDBDocumentClient.from(client, {
   marshallOptions: { removeUndefinedValues: true },
 });
 
-export const TABLE = process.env.DYNAMODB_TABLE_NAME ?? "MemeDay";
+const tableName = process.env.DYNAMODB_TABLE_NAME;
+if (!tableName) {
+  throw new Error("Missing DYNAMODB_TABLE_NAME");
+}
+export const TABLE = tableName;

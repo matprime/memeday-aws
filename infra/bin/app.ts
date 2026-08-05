@@ -11,6 +11,19 @@ const region: string =
   process.env.AWS_REGION ??
   "eu-west-1";
 
+const alertEmails: string[] = (process.env.ALERT_EMAILS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 new MemeDayStack(app, "MemeDayStack", {
   env: { region },
+  stage: "prod",
+  alertEmails,
+});
+
+new MemeDayStack(app, "MemeDayDev", {
+  env: { region },
+  stage: "dev",
+  alertEmails,
 });
