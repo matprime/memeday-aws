@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getUserIdFromRequest } from "@/lib/cognito";
-import { createPendingUpload, getUserById } from "@/lib/db";
+import { createPendingUpload } from "@/lib/db";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? "us-east-1" });
 
@@ -40,11 +40,9 @@ export async function GET(request: NextRequest) {
   const pendingId = randomUUID();
   const s3Key = `uploads/${userId}/${pendingId}.${ext}`;
 
-  const creator = await getUserById(userId);
   await createPendingUpload({
     id: pendingId,
     creatorId: userId,
-    creatorWalletAddr: creator?.walletAddr,
     s3Key,
     caption,
   });
