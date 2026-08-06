@@ -1,4 +1,3 @@
-
 .next/
 node_modules/
 .env.local
@@ -14,3 +13,4 @@ cdk.out/
 infra/dist/
 HANDOFF.md
 *.tsbuildinfo
+.vercel
