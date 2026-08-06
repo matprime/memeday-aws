@@ -10,10 +10,14 @@ import type { DynamoDBStreamHandler } from "aws-lambda";
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-// TODO(post-judging): drop the "MemeDay" fallback and fail loud on missing env
-// (kept for now — removing it changes the bundled asset hash and breaks the
-// zero-diff freeze on the prod stack during H0 judging).
-const TABLE = process.env.DYNAMODB_TABLE_NAME ?? "MemeDay";
+// No fallback. The old "MemeDay" table survives the rename as an orphan, so a
+// missing env var would silently write to a dead table rather than fail. CDK
+// always injects this, so the throw only catches misconfiguration.
+const tableName = process.env.DYNAMODB_TABLE_NAME;
+if (!tableName) {
+  throw new Error("Missing DYNAMODB_TABLE_NAME");
+}
+const TABLE = tableName;
 
 // Zero-pad to 15 digits so DynamoDB lexicographic sort == numeric sort for scores.
 function padScore(n: number): string {
