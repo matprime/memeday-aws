@@ -32,7 +32,11 @@ export class MemeDayStack extends cdk.Stack {
     const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
     const table = new dynamodb.Table(this, "MemeDayTable", {
-      tableName: isProd ? "MemeDay" : "MemeDayDev",
+      // Prod table renamed to start clean. The live "MemeDay" table has zero
+      // GSIs and CloudFormation can only add one GSI per update, so a rename
+      // creates all three at table-creation time in a single deploy instead.
+      // RETAIN keeps the old table as the rollback artifact.
+      tableName: isProd ? "MemeDayProd" : "MemeDayDev",
       partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
