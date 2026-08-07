@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Send } from "lucide-react";
 import { DbComment } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
+import { EVENTS, track } from "@/lib/analytics";
 import { formatDistanceToNow } from "date-fns";
 
 interface Props {
@@ -42,6 +43,7 @@ export function CommentSection({ memeId, initialComments, onCommentAdded }: Prop
     }
 
     const { comment } = await res.json();
+    track(EVENTS.commentPosted, { memeId });
     setComments((prev) => [...prev, comment]);
     setBody("");
     onCommentAdded?.();

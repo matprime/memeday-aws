@@ -9,6 +9,7 @@ export const EVENTS = {
   signupCompleted: "signup_completed",
   memeUploaded: "meme_uploaded",
   voteCast: "vote_cast",
+  commentPosted: "comment_posted",
   tipQrShown: "tip_qr_shown",
   tipLinkOpened: "tip_link_opened",
   mintStarted: "mint_started",
@@ -39,15 +40,27 @@ export function initAnalytics() {
   if (!key) return;
 
   posthog.init(key, {
-    api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
+    api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://eu.i.posthog.com",
     // Opts into the modern defaults, which capture $pageview on History API
     // changes — required for App Router client-side navigation.
     defaults: "2025-05-24",
     // localStorage only: no analytics cookies, which is what the footer note says.
     persistence: "localStorage",
+    // Only the events declared in EVENTS, plus $pageview. Autocapture logged every
+    // click/input/form ("clicked button with text …"), which buried the deliberate
+    // events without answering a question we're asking.
+    autocapture: false,
+    capture_performance: false,
   });
 
-  posthog.register({ platform: "web", network: SOLANA_NETWORK });
+  // PostHog's free tier allows one project, so local dev and production share
+  // it. Filter insights on environment = "production" to keep dev clicks out of
+  // the funnels. Next.js sets NODE_ENV automatically — nothing to configure.
+  posthog.register({
+    platform: "web",
+    network: SOLANA_NETWORK,
+    environment: process.env.NODE_ENV,
+  });
   initialized = true;
 }
 

@@ -94,7 +94,7 @@ CLOUDFRONT_DOMAIN=           # without https://; blank serves via /api/image/<ke
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 NEXT_PUBLIC_POSTHOG_KEY=     # blank locally — analytics no-op; see docs/ANALYTICS_EVENTS.md
-NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com
 NEXT_PUBLIC_SOLANA_NETWORK=devnet
 ```
 

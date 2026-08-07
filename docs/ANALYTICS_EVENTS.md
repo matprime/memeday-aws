@@ -22,6 +22,13 @@ is sent.
 `$pageview` is captured automatically on App Router client navigations via PostHog's
 `defaults: "2025-05-24"` (history-change capture). There is no custom pageview code.
 
+Autocapture and web-vitals capture are **off** (`autocapture: false`,
+`capture_performance: false`). PostHog otherwise logs every click, input and form
+submit (`clicked button with text "2"`), which buries the deliberate events below and
+answers no question we're asking. The only events sent are `$pageview`, `$pageleave`,
+and the table below. Turn autocapture back on temporarily if you need to discover what
+people click that isn't instrumented — then turn it off again.
+
 ## Global properties
 
 Registered as super-properties on every event:
@@ -30,6 +37,11 @@ Registered as super-properties on every event:
 |---|---|
 | `platform` | `"web"` |
 | `network` | `NEXT_PUBLIC_SOLANA_NETWORK`, default `"devnet"` |
+| `environment` | `NODE_ENV` — `"development"` locally, `"production"` on Vercel |
+
+**Every saved insight must filter on `environment = "production"`.** The PostHog free
+tier allows one project, so local dev and production share it; without that filter,
+developer clicks land in the funnels you are trying to read.
 
 ## Events
 
@@ -38,6 +50,7 @@ Registered as super-properties on every event:
 | `signup_completed` | A **new** account becomes usable. Email: after the verification code is confirmed and the auto-login succeeds. Wallet: first-ever signature verification for that address (`isNewUser` from `/api/auth/wallet/verify`). Return logins do **not** fire it. | `method`: `"email" \| "wallet"` | `components/EmailAuthModal.tsx`, `components/WalletAuthSync.tsx` |
 | `meme_uploaded` | `POST /api/memes` succeeded — image uploaded, Lambda validation passed, row written. | `memeId`, `isNFT`, `minted` | `components/PostMemeModal.tsx` |
 | `vote_cast` | Vote accepted by the server. Not fired for duplicate votes or failures. | `memeId`, `surface`: `"feed" \| "detail"` | `components/MemeCard.tsx`, `components/MemeActionBar.tsx` |
+| `comment_posted` | `POST /api/comments` succeeded. Not fired for empty bodies, logged-out attempts, or failures. | `memeId` | `components/CommentSection.tsx` |
 | `tip_qr_shown` | Tip modal renders the Solana Pay QR with a valid amount. Once per modal open, not per amount edit. | `memeId` | `components/TipModal.tsx` |
 | `tip_link_opened` | User taps Send Tip with **no** connected wallet, so the `solana:` deep link is opened instead. | `memeId`, `amountSol` | `components/TipModal.tsx` |
 | `mint_started` | NFT mint begins (Phantom signature prompt about to appear). | — | `components/PostMemeModal.tsx` |
@@ -73,5 +86,5 @@ everything by `network` once prod runs mainnet.
 | Var | Where | Required |
 |---|---|---|
 | `NEXT_PUBLIC_POSTHOG_KEY` | Vercel project settings (prod), `.env.local` (dev) | Yes for events to send |
-| `NEXT_PUBLIC_POSTHOG_HOST` | same | No — defaults to `https://us.i.posthog.com` |
+| `NEXT_PUBLIC_POSTHOG_HOST` | same | No — defaults to `https://eu.i.posthog.com` (this project is on PostHog EU) |
 | `NEXT_PUBLIC_SOLANA_NETWORK` | same | No — defaults to `devnet` |
