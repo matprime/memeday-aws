@@ -4,6 +4,8 @@ import { SolanaWalletProvider } from "@/components/WalletProvider";
 import { Navbar } from "@/components/Navbar";
 import { BagsToastContainer } from "@/components/BagsToast";
 import { WalletAuthSync } from "@/components/WalletAuthSync";
+import { AnalyticsInit } from "@/components/AnalyticsInit";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "MemeDay — Creator Economy on Solana",
@@ -21,6 +23,7 @@ export default function RootLayout({
       <body>
         <SolanaWalletProvider>
           <WalletAuthSync />
+          <AnalyticsInit />
           <Navbar />
           <main className="min-h-screen">{children}</main>
           <BagsToastContainer />
@@ -29,8 +32,13 @@ export default function RootLayout({
               MemeDay &bull;{" "}
               <span className="text-accent-light">Solana</span>
             </p>
+            <p className="mt-2 text-gray-700">
+              We record anonymous product usage to see what people actually use. No
+              advertising, no analytics cookies &mdash; browser local storage only.
+            </p>
           </footer>
         </SolanaWalletProvider>
+        <Analytics />
       </body>
     </html>
   );

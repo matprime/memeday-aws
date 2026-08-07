@@ -6,6 +6,7 @@ import { DbMeme, Creator } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { InvestModal } from "./InvestModal";
 import { TipModal } from "./TipModal";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   meme: DbMeme;
@@ -52,6 +53,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
       setVotes((v) => v - 1);
       addToast("You already voted for this meme", "error");
     } else {
+      track(EVENTS.voteCast, { memeId: meme.id, surface: "detail" });
       addToast("Vote recorded!", "success");
     }
   };
@@ -140,6 +142,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
       {tipOpen && (
         <TipModal
           creatorWallet={meme.creatorWalletAddr ?? ""}
+          memeId={meme.id}
           memeCaption={meme.caption}
           onClose={() => setTipOpen(false)}
         />

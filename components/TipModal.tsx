@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Gift, Copy, ExternalLink, CheckCircle, AlertCircle } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { SystemProgram, Transaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   creatorWallet: string;
+  memeId?: string;
   memeCaption?: string;
   onClose: () => void;
 }
@@ -27,7 +29,7 @@ function buildSolanaPayUrl(recipient: string, amount: string, message: string) {
   return `solana:${recipient}?${params}`;
 }
 
-export function TipModal({ creatorWallet, memeCaption, onClose }: Props) {
+export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props) {
   const [amount, setAmount] = useState("0.01");
   const [copied, setCopied] = useState(false);
   const [txStatus, setTxStatus] = useState<TxStatus>("idle");
@@ -47,6 +49,15 @@ export function TipModal({ creatorWallet, memeCaption, onClose }: Props) {
     [creatorWallet, amount, isValid, memeCaption]
   );
 
+  // Once per modal open, not per amount change — the QR is the funnel step,
+  // and re-firing on every keystroke would inflate it.
+  const qrTracked = useRef(false);
+  useEffect(() => {
+    if (!isValid || qrTracked.current) return;
+    qrTracked.current = true;
+    track(EVENTS.tipQrShown, { memeId });
+  }, [isValid, memeId]);
+
   const handleCopy = async () => {
     await navigator.clipboard.writeText(creatorWallet);
     setCopied(true);
@@ -55,6 +66,7 @@ export function TipModal({ creatorWallet, memeCaption, onClose }: Props) {
 
   const handleSendTip = async () => {
     if (!publicKey || !sendTransaction) {
+      track(EVENTS.tipLinkOpened, { memeId, amountSol: parseFloat(amount) });
       window.location.href = solanaPayUrl;
       return;
     }

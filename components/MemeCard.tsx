@@ -9,6 +9,7 @@ import { useAppStore } from "@/lib/store";
 import { formatDistanceToNow } from "date-fns";
 import { CreatorAvatar } from "./CreatorAvatar";
 import { TipModal } from "./TipModal";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   meme: DbMeme;
@@ -61,6 +62,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
       setVotes((v) => v - 1);
       addToast("You already voted for this meme", "error");
     } else {
+      track(EVENTS.voteCast, { memeId: meme.id, surface: "feed" });
       addToast(`Voted for "${meme.caption.slice(0, 30)}…"`, "success");
     }
   };
@@ -176,6 +178,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
     {tipOpen && (
       <TipModal
         creatorWallet={meme.creatorWalletAddr ?? ""}
+        memeId={meme.id}
         memeCaption={meme.caption}
         onClose={() => setTipOpen(false)}
       />

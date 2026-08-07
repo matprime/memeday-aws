@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAppStore } from "@/lib/store";
+import { EVENTS, track } from "@/lib/analytics";
 
 // Triggers Cognito auth automatically whenever Phantom connects.
 // Clears the token when the wallet disconnects.
@@ -72,11 +73,12 @@ export function WalletAuthSync() {
           body: JSON.stringify({ walletAddress, challenge, signature }),
         });
         if (!verifyRes.ok) throw new Error("Auth verification failed");
-        const { accessToken } = await verifyRes.json();
+        const { accessToken, isNewUser } = await verifyRes.json();
 
         // Don't overwrite an email session that completed while wallet auth was in flight
         if (!useAppStore.getState().cognitoToken) {
           setCognitoToken(accessToken, "wallet");
+          if (isNewUser) track(EVENTS.signupCompleted, { method: "wallet" });
         }
       } catch (err) {
         addToast(

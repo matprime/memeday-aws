@@ -7,6 +7,7 @@ import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
 import { mintMemeNft } from "@/lib/nft";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   onClose: () => void;
@@ -131,7 +132,11 @@ export function PostMemeModal({ onClose }: Props) {
           addToast("NFT minting is only available for wallet-connected users.", "error");
         } else {
           setStep("minting");
+          // The meme row doesn't exist yet, so mint events carry no memeId —
+          // they're joined to the upload by session, not by meme.
+          track(EVENTS.mintStarted);
           mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim());
+          track(EVENTS.mintConfirmed, { mintAddress });
           addToast("NFT minted on Solana!", "success");
         }
       }
@@ -184,6 +189,9 @@ export function PostMemeModal({ onClose }: Props) {
       });
 
       if (!res.ok) throw new Error("Failed to save meme");
+
+      const { meme } = await res.json();
+      track(EVENTS.memeUploaded, { memeId: meme?.id, isNFT, minted: !!mintAddress });
 
       addToast(`Meme posted! "${caption.slice(0, 30)}…"`, "success");
       router.refresh();

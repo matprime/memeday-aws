@@ -100,10 +100,13 @@ async function ensureCognitoUser(walletAddress: string) {
   const username = `wallet_${walletAddress}`;
   const password = derivePassword(walletAddress);
 
+  let isNewUser = false;
+
   try {
     await client.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: username }));
   } catch (err: any) {
     if (err.name !== "UserNotFoundException") throw err;
+    isNewUser = true;
     // First login — create user with permanent password, suppress Cognito welcome email
     await client.send(
       new AdminCreateUserCommand({
@@ -124,7 +127,7 @@ async function ensureCognitoUser(walletAddress: string) {
     );
   }
 
-  return { username, password };
+  return { username, password, isNewUser };
 }
 
 export async function POST(req: NextRequest) {
@@ -143,7 +146,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { username, password } = await ensureCognitoUser(walletAddress);
+    const { username, password, isNewUser } = await ensureCognitoUser(walletAddress);
     const client = cognitoClient();
 
     const result = await client.send(
@@ -163,6 +166,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       accessToken: tokens.AccessToken,
       expiresIn: tokens.ExpiresIn,
+      // Lets the client tell a first-ever wallet sign-up apart from a return
+      // login, which is otherwise indistinguishable — both just get a token.
+      isNewUser,
     });
   } catch (err: any) {
     console.error("Wallet auth error:", err);
