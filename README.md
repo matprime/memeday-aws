@@ -57,30 +57,46 @@ Requires Node.js 22 LTS.
 ```bash
 npm install
 cp .env.example .env
+touch .env.local
 ```
 
-Fill in `.env`:
+Env is split in two, both gitignored. `.env.local` overrides `.env` — the precedence
+Next.js uses, and the one `test/*.test.js` reproduces.
+
+`.env` — deploy-only, what `infra/` CDK commands read:
 
 ```
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=eu-west-1
 
+WALLET_AUTH_SECRET=          # openssl rand -hex 32
+
 # Comma-separated recipients for CloudWatch alarm emails (SNS).
 # Empty = topic deployed with no subscriptions (no alerts sent).
 ALERT_EMAILS=
-
-DYNAMODB_TABLE_NAME=MemeDay
-
-COGNITO_USER_POOL_ID=        # from cdk deploy output: UserPoolId
-COGNITO_CLIENT_ID=           # from cdk deploy output: UserPoolClientId
-WALLET_AUTH_SECRET=          # openssl rand -hex 32
-
-S3_BUCKET_NAME=
-CLOUDFRONT_DOMAIN=           # without https://
-
-NEXT_PUBLIC_APP_URL=         # e.g. https://your-app.vercel.app
 ```
+
+`.env.local` — per-stack app vars, from the stack outputs
+(`aws cloudformation describe-stacks --stack-name MemeDayDev --region eu-west-1`):
+
+```
+AWS_REGION=eu-west-1         # repeated: clients default to us-east-1 when unset
+
+DYNAMODB_TABLE_NAME=MemeDayDev   # MemeDayProd is the production table
+
+COGNITO_USER_POOL_ID=        # stack output: UserPoolId
+COGNITO_CLIENT_ID=           # stack output: UserPoolClientId
+
+S3_BUCKET_NAME=              # stack output: BucketName
+CLOUDFRONT_DOMAIN=           # without https://; blank serves via /api/image/<key>
+
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+Deployments read neither file — set the app vars in the Vercel project settings.
+Keeping them out of `.env` means a missing `.env.local` fails loud in `lib/dynamo.ts`
+instead of silently reading the wrong stack.
 
 ```bash
 npm run dev
