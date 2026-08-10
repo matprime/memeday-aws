@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, Mail, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   onClose: () => void;
@@ -42,8 +43,11 @@ export function EmailAuthModal({ onClose }: Props) {
     return data;
   };
 
-  const finishLogin = async (accessToken: string) => {
+  // `isNewAccount` is only true on the confirm-code path — that verification is
+  // what turns a created-but-unusable Cognito user into a real signup.
+  const finishLogin = async (accessToken: string, isNewAccount = false) => {
     setCognitoToken(accessToken, "email", email);
+    if (isNewAccount) track(EVENTS.signupCompleted, { method: "email" });
     // Ensure the user item exists with the EMAIL# lookup entry
     await fetch("/api/users", {
       method: "POST",
@@ -79,7 +83,7 @@ export function EmailAuthModal({ onClose }: Props) {
       } else {
         await post("/api/auth/email/confirm", { username: pendingUsername, code });
         const { accessToken } = await post("/api/auth/email/login", { email, password });
-        await finishLogin(accessToken);
+        await finishLogin(accessToken, true);
       }
     } catch (err) {
       const e = err as Error & { needsConfirmation?: boolean; username?: string };
