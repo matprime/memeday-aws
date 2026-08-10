@@ -1,3 +1,5 @@
+import { cache } from "react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -10,9 +12,14 @@ import { formatDistanceToNow } from "date-fns";
 
 export const dynamic = "force-dynamic";
 
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+
 interface Props {
   params: Promise<{ id: string }>;
 }
+
+const getMeme = cache(getMemeById);
+const getUser = cache(getUserById);
 
 function buildStubCreator(userId: string, walletAddr?: string | null, bagsProjectId?: string | null): Creator {
   const seed = walletAddr ?? userId;
@@ -38,15 +45,44 @@ function buildStubCreator(userId: string, walletAddr?: string | null, bagsProjec
   };
 }
 
+export async function generateMetadata(props: Props): Promise<Metadata> {
+  const params = await props.params;
+  const meme = await getMeme(params.id);
+  if (!meme) notFound();
+
+  const user = await getUser(meme.creatorId);
+  const creator = buildStubCreator(meme.creatorId, user?.walletAddr, user?.bagsProjectId);
+  const imageUrl = meme.imageUrl.startsWith("http") ? meme.imageUrl : `${APP_URL}${meme.imageUrl}`;
+  const title = `${meme.caption} — @${creator.username}`;
+  const description = "Tip the creator on Solana";
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url: `${APP_URL}/meme/${meme.id}`,
+      images: [imageUrl],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [imageUrl],
+    },
+  };
+}
+
 export default async function MemePage(props: Props) {
   const params = await props.params;
   const [meme, comments] = await Promise.all([
-    getMemeById(params.id),
+    getMeme(params.id),
     getComments(params.id),
   ]);
   if (!meme) notFound();
 
-  const user = await getUserById(meme.creatorId);
+  const user = await getUser(meme.creatorId);
   const creator = buildStubCreator(meme.creatorId, user?.walletAddr, user?.bagsProjectId);
 
   return (
