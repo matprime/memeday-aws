@@ -36,6 +36,16 @@ export default function RootLayout({
               We record anonymous product usage to see what people actually use. No
               advertising, no analytics cookies &mdash; browser local storage only.
             </p>
+            <p className="mt-2">
+              <a
+                href="https://tally.so/r/VLaRb6"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-light hover:underline"
+              >
+                Feedback
+              </a>
+            </p>
           </footer>
         </SolanaWalletProvider>
         <Analytics />
