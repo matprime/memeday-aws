@@ -28,10 +28,7 @@ export default function RootLayout({
           <main className="min-h-screen">{children}</main>
           <BagsToastContainer />
           <footer className="border-t border-border mt-16 py-8 text-center text-xs text-gray-600">
-            <p>
-              MemeDay &bull;{" "}
-              <span className="text-accent-light">Solana</span>
-            </p>
+            <p>MemeDay</p>
             <p className="mt-2 text-gray-700">
               We record anonymous product usage to see what people actually use. No
               advertising, no analytics cookies &mdash; browser local storage only.
