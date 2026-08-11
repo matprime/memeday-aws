@@ -1,7 +1,7 @@
 # MemeDay Architecture
 
 DynamoDB single-table primary store (single-region today; Global Tables
-planned), Vercel + Lambda hybrid compute, S3 media (CloudFront-ready),
+planned), Vercel + Lambda hybrid compute, S3 media behind CloudFront,
 Streams-driven materialized views, Cognito identity provider (email +
 server-verified wallet sign-in), Bags.fm mocked.
 
@@ -25,11 +25,13 @@ data model" below for the full schema.
 
 ### Media : Amazon S3 + CloudFront
 - S3 is a private bucket holding meme images and NFT metadata JSON.
-- CloudFront (Origin Access Control) is the planned public read path. It is
-  NOT yet enabled; until it is, reads are served by a temporary Next.js image
-  proxy (`/api/image/[...key]`) that fetches from the private bucket
-  server-side. Swapping to CloudFront requires no application changes (the
-  upload route already emits a CloudFront URL when `CLOUDFRONT_DOMAIN` is set).
+- CloudFront (Origin Access Control) is the public read path and is enabled in
+  both Production and Preview, each backed by its own distribution per stack.
+- A Next.js image proxy (`/api/image/[...key]`) is retained as a fallback for
+  AWS accounts where CloudFront is not yet released by AWS support. It is
+  selected only when `CLOUDFRONT_DOMAIN` is unset, so it is inactive in all
+  deployed environments today. It reads the private bucket server-side, which
+  is why it is a documented exception to the CloudFront-only read path.
 - Clients upload directly to S3 via presigned URLs, bypassing Vercel.
 
 ### Auth : Amazon Cognito (identity provider)
@@ -102,8 +104,9 @@ retrievable in a single query.
 - Trending / Leaderboard / Daily featured are served from materialized
   views (Streams to Lambda), never computed live from base items.
 - Media uploads go client to S3 (presigned), not client to Vercel to S3.
-- Media reads go through CloudFront once enabled; today they go through the
-  `/api/image` proxy. Clients never read the S3 bucket directly either way.
+- Media reads go through CloudFront. The `/api/image` proxy is a fallback for
+  accounts without CloudFront and is off whenever `CLOUDFRONT_DOMAIN` is set.
+  Do not remove the proxy route. Clients never read the S3 bucket directly.
 - `userId` is the Cognito `sub`; do not generate user IDs elsewhere.
 - Wallet login verifies the signature in the `/api/auth/wallet/verify` API
   route, then issues a Cognito session via admin-initiated auth; do not build a
