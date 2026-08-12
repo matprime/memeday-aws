@@ -226,6 +226,63 @@ export class MemeDayStack extends cdk.Stack {
       },
     });
 
+    // --- Vercel runtime IAM user (KAN-17) ---
+    // memeday-runtime-prod / memeday-runtime-dev already exist in AWS,
+    // created out-of-band before this stack managed them. A one-time
+    // `cdk import` per stack is required to adopt each into CloudFormation
+    // state before `cdk deploy` will succeed against them — CreateUser fails
+    // loud (EntityAlreadyExists) rather than duplicating on a plain deploy.
+    // Action lists below are grepped from actual AWS SDK calls in app/ and
+    // lib/, not guessed (see KAN-17 step 3).
+    const runtimeUser = new iam.User(this, "RuntimeUser", {
+      userName: isProd ? "memeday-runtime-prod" : "memeday-runtime-dev",
+    });
+
+    runtimeUser.attachInlinePolicy(
+      new iam.Policy(this, "RuntimeUserPolicy", {
+        statements: [
+          // DynamoDB — actions used by lib/db.ts. Scan excluded: getAllUsers
+          // (lib/db.ts:449) has zero callers, so it's unused per KAN-17's
+          // no-unused-permissions acceptance criteria.
+          new iam.PolicyStatement({
+            actions: [
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+              "dynamodb:DeleteItem",
+              "dynamodb:Query",
+              "dynamodb:BatchGetItem",
+            ],
+            resources: [table.tableArn, `${table.tableArn}/index/*`],
+          }),
+          // Cognito — the 10 actions used across app/api/auth/**.
+          new iam.PolicyStatement({
+            actions: [
+              "cognito-idp:SignUp",
+              "cognito-idp:ConfirmSignUp",
+              "cognito-idp:ForgotPassword",
+              "cognito-idp:ConfirmForgotPassword",
+              "cognito-idp:ResendConfirmationCode",
+              "cognito-idp:ListUsers",
+              "cognito-idp:AdminCreateUser",
+              "cognito-idp:AdminGetUser",
+              "cognito-idp:AdminInitiateAuth",
+              "cognito-idp:AdminSetUserPassword",
+            ],
+            resources: [userPool.userPoolArn],
+          }),
+          // S3 — PutObject only (upload-url route). GetObject deliberately
+          // excluded per KAN-38: the image proxy route is reachable by
+          // direct URL regardless of CLOUDFRONT_DOMAIN, and the decision
+          // was to accept a 500 on that path rather than keep the grant.
+          new iam.PolicyStatement({
+            actions: ["s3:PutObject"],
+            resources: [`${bucket.bucketArn}/uploads/*`],
+          }),
+        ],
+      })
+    );
+
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
     new cdk.CfnOutput(this, "Region", { value: this.region });
