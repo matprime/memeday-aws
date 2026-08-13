@@ -9,6 +9,7 @@ import { MemePageClient } from "@/components/MemePageClient";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { SOLANA_EXPLORER_CLUSTER } from "@/lib/solana/network";
 
 export const dynamic = "force-dynamic";
 
@@ -132,7 +133,7 @@ export default async function MemePage(props: Props) {
 
         {meme.nftMint ? (
           <a
-            href={`https://explorer.solana.com/address/${meme.nftMint}?cluster=devnet`}
+            href={`https://explorer.solana.com/address/${meme.nftMint}?cluster=${SOLANA_EXPLORER_CLUSTER}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-accent-light border border-accent/40 bg-accent/10 hover:bg-accent/20 px-3 py-2 rounded-lg transition-colors font-bold"

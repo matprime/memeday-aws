@@ -24,16 +24,13 @@ export type EventName = (typeof EVENTS)[keyof typeof EVENTS];
 
 type EventProperties = Record<string, string | number | boolean | null | undefined>;
 
-// Cluster reported on every event. Separate from the RPC URL because analytics
-// needs the human-readable name, not an endpoint.
-const SOLANA_NETWORK = process.env.NEXT_PUBLIC_SOLANA_NETWORK ?? "devnet";
-
 let initialized = false;
 
-// Called once from <AnalyticsInit />. Without NEXT_PUBLIC_POSTHOG_KEY this stays
-// uninitialized and every track() call below becomes a no-op, so local dev and
-// tests never send events.
-export function initAnalytics() {
+// Called once from <AnalyticsInit />, which reads the network from
+// SolanaConfigContext (lib/solana/network.ts is the source of truth).
+// Without NEXT_PUBLIC_POSTHOG_KEY this stays uninitialized and every track()
+// call below becomes a no-op, so local dev and tests never send events.
+export function initAnalytics(network: string) {
   if (initialized || typeof window === "undefined") return;
 
   const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -58,7 +55,7 @@ export function initAnalytics() {
   // the funnels. Next.js sets NODE_ENV automatically — nothing to configure.
   posthog.register({
     platform: "web",
-    network: SOLANA_NETWORK,
+    network,
     environment: process.env.NODE_ENV,
   });
   initialized = true;

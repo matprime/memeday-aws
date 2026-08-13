@@ -9,6 +9,7 @@ import { useState } from "react";
 import { PostMemeModal } from "./PostMemeModal";
 import { EmailAuthModal } from "./EmailAuthModal";
 import { useAppStore } from "@/lib/store";
+import { useSolanaConfig } from "./WalletProvider";
 
 function parseTokenSub(token: string): string | null {
   try {
@@ -26,6 +27,7 @@ const NAV = [
 
 export function Navbar() {
   const pathname = usePathname();
+  const { network } = useSolanaConfig();
   const { publicKey } = useWallet();
   const { cognitoToken, authMethod, authEmail, setCognitoToken, addToast } = useAppStore();
   const userId = cognitoToken ? parseTokenSub(cognitoToken) : null;
@@ -50,6 +52,14 @@ export function Navbar() {
               Meme<span className="text-accent-light">Day</span>
             </span>
           </Link>
+          {network === "devnet" && (
+            <span
+              className="hidden sm:inline-flex items-center text-[10px] font-semibold uppercase tracking-wide text-yellow-400 bg-yellow-900/20 border border-yellow-700/40 px-2 py-0.5 rounded-full"
+              title="Running on Solana devnet — test network, not real funds"
+            >
+              Devnet · test network
+            </span>
+          )}
 
           {/* Nav links */}
           <div className="hidden md:flex items-center gap-1">

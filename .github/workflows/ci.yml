@@ -44,6 +44,9 @@ jobs:
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
           CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          SOLANA_NETWORK: ${{ secrets.SOLANA_NETWORK }}
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          SOLANA_ENABLED: ${{ secrets.SOLANA_ENABLED }}
 
       - name: Build
         run: npm run build
@@ -55,6 +58,9 @@ jobs:
           WALLET_AUTH_SECRET: ${{ secrets.WALLET_AUTH_SECRET }}
           CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          SOLANA_NETWORK: ${{ secrets.SOLANA_NETWORK }}
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          SOLANA_ENABLED: ${{ secrets.SOLANA_ENABLED }}
 
       - name: Integration test - S3 handler (dev stack)
         if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')

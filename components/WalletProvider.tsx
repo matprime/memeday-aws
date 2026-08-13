@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useMemo } from "react";
 import {
   ConnectionProvider as _CP,
   WalletProvider as _WP,
@@ -8,6 +8,7 @@ import {
 import { WalletModalProvider as _WMP } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { useAppStore } from "@/lib/store";
+import type { SolanaNetwork, SolanaExplorerCluster } from "@/lib/solana/network";
 
 require("@solana/wallet-adapter-react-ui/styles.css");
 
@@ -16,11 +17,36 @@ const ConnectionProvider = _CP as unknown as React.FC<{ endpoint: string; childr
 const WalletProvider = _WP as unknown as React.FC<{ wallets: any[]; autoConnect: boolean; onError: (error: Error) => void; children: React.ReactNode }>;
 const WalletModalProvider = _WMP as unknown as React.FC<{ children: React.ReactNode }>;
 
-const DEVNET_RPC = "https://api.devnet.solana.com";
+// Validated in lib/solana/network.ts (server-only) and handed down here as
+// props from app/layout.tsx, since client bundles can't read that module's
+// env vars directly. This context is how the rest of the client tree
+// (TipModal, PostMemeModal, analytics) reaches those values.
+interface SolanaConfig {
+  network: SolanaNetwork;
+  rpcUrl: string;
+  explorerCluster: SolanaExplorerCluster;
+  enabled: boolean;
+  disabledMessage: string;
+}
+
+const SolanaConfigContext = createContext<SolanaConfig | null>(null);
+
+export function useSolanaConfig(): SolanaConfig {
+  const config = useContext(SolanaConfigContext);
+  if (!config) {
+    throw new Error("useSolanaConfig must be used within SolanaWalletProvider");
+  }
+  return config;
+}
 
 export function SolanaWalletProvider({
+  network,
+  rpcUrl,
+  explorerCluster,
+  enabled,
+  disabledMessage,
   children,
-}: {
+}: SolanaConfig & {
   children: React.ReactNode;
 }) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
@@ -37,11 +63,18 @@ export function SolanaWalletProvider({
     [addToast]
   );
 
+  const config = useMemo(
+    () => ({ network, rpcUrl, explorerCluster, enabled, disabledMessage }),
+    [network, rpcUrl, explorerCluster, enabled, disabledMessage]
+  );
+
   return (
-    <ConnectionProvider endpoint={DEVNET_RPC}>
-      <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
-        <WalletModalProvider>{children}</WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <SolanaConfigContext.Provider value={config}>
+      <ConnectionProvider endpoint={rpcUrl}>
+        <WalletProvider wallets={wallets} autoConnect onError={onWalletError}>
+          <WalletModalProvider>{children}</WalletModalProvider>
+        </WalletProvider>
+      </ConnectionProvider>
+    </SolanaConfigContext.Provider>
   );
 }
