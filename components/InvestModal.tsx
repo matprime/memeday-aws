@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { X, Zap, TrendingUp, Users, BarChart3, Loader2 } from "lucide-react";
+import { X, Zap, TrendingUp, Users, BarChart3, Loader2, AlertCircle } from "lucide-react";
 import { Creator } from "@/lib/types";
 import { buyCreatorToken, sellCreatorToken } from "@/lib/bags";
 import { useAppStore } from "@/lib/store";
 import { CreatorAvatar } from "./CreatorAvatar";
+import { useSolanaConfig } from "./WalletProvider";
 
 interface Props {
   creator: Creator;
@@ -20,6 +21,7 @@ export function InvestModal({ creator, onClose }: Props) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
   const { addToast, emitBagsEvent } = useAppStore();
+  const { enabled, disabledMessage } = useSolanaConfig();
 
   const [mode, setMode] = useState<Mode>("buy");
   const [solAmount, setSolAmount] = useState("0.1");
@@ -34,6 +36,7 @@ export function InvestModal({ creator, onClose }: Props) {
   ).toFixed(4);
 
   const handleBuy = async () => {
+    if (!enabled) return;
     if (!publicKey) {
       setVisible(true);
       return;
@@ -68,6 +71,7 @@ export function InvestModal({ creator, onClose }: Props) {
   };
 
   const handleSell = async () => {
+    if (!enabled) return;
     if (!publicKey) {
       setVisible(true);
       return;
@@ -126,6 +130,15 @@ export function InvestModal({ creator, onClose }: Props) {
           </button>
         </div>
 
+        {!enabled ? (
+          <div className="p-5">
+            <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-700/40 rounded-xl px-4 py-3 text-sm text-yellow-400">
+              <AlertCircle size={16} />
+              {disabledMessage}
+            </div>
+          </div>
+        ) : (
+        <>
         {/* Bags banner */}
         <div className="mx-5 mt-4 flex items-center gap-2 bg-bags/10 border border-bags/30 rounded-xl px-4 py-2.5">
           <Zap size={16} className="text-bags flex-shrink-0" />
@@ -241,8 +254,11 @@ export function InvestModal({ creator, onClose }: Props) {
             </div>
           )}
         </div>
+        </>
+        )}
 
         {/* Action button */}
+        {enabled && (
         <div className="p-5">
           {publicKey ? (
             <button
@@ -277,6 +293,7 @@ export function InvestModal({ creator, onClose }: Props) {
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

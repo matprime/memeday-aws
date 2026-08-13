@@ -9,8 +9,6 @@ import {
 import { generateSigner, percentAmount } from "@metaplex-foundation/umi";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 
-const DEVNET_RPC =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 const MAX_ON_CHAIN_URI_LEN = 200;
 
 async function registerMetadataUri(
@@ -56,7 +54,8 @@ export async function mintMemeNft(
   wallet: WalletContextState,
   _walletAddress: string,
   imageUrl: string,
-  caption: string
+  caption: string,
+  rpcUrl: string
 ): Promise<string> {
   if (!wallet.connected || !wallet.publicKey) {
     throw new Error("Wallet not connected — reconnect Phantom and try again.");
@@ -64,7 +63,7 @@ export async function mintMemeNft(
 
   const metadataUri = await registerMetadataUri(imageUrl, caption);
 
-  const umi = createUmi(DEVNET_RPC)
+  const umi = createUmi(rpcUrl)
     .use(mplTokenMetadata())
     .use(walletAdapterIdentity(wallet as any));
 
@@ -81,7 +80,7 @@ export async function mintMemeNft(
   } catch (err) {
     if (err instanceof TypeError && err.message === "Failed to fetch") {
       throw new Error(
-        `Solana devnet unreachable — check your connection or set NEXT_PUBLIC_SOLANA_RPC_URL to a private RPC endpoint.`
+        `Solana RPC unreachable — check your connection or the configured SOLANA_RPC_URL.`
       );
     }
     throw err;

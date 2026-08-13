@@ -6,6 +6,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { SystemProgram, Transaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { EVENTS, track } from "@/lib/analytics";
+import { useSolanaConfig } from "./WalletProvider";
 
 interface Props {
   creatorWallet: string;
@@ -15,7 +16,6 @@ interface Props {
 }
 
 const PRESETS = ["0.01", "0.05", "0.1"] as const;
-const EXPLORER_CLUSTER = "devnet";
 
 type TxStatus = "idle" | "sending" | "success" | "error";
 
@@ -30,6 +30,7 @@ function buildSolanaPayUrl(recipient: string, amount: string, message: string) {
 }
 
 export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props) {
+  const { explorerCluster, enabled, disabledMessage } = useSolanaConfig();
   const [amount, setAmount] = useState("0.01");
   const [copied, setCopied] = useState(false);
   const [txStatus, setTxStatus] = useState<TxStatus>("idle");
@@ -65,6 +66,7 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
   };
 
   const handleSendTip = async () => {
+    if (!enabled) return;
     if (!publicKey || !sendTransaction) {
       track(EVENTS.tipLinkOpened, { memeId, amountSol: parseFloat(amount) });
       window.location.href = solanaPayUrl;
@@ -110,6 +112,14 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
           </button>
         </div>
 
+        {!enabled ? (
+          <div className="p-5">
+            <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-700/40 rounded-xl px-4 py-3 text-sm text-yellow-400">
+              <AlertCircle size={16} />
+              {disabledMessage}
+            </div>
+          </div>
+        ) : (
         <div className="p-5 space-y-4">
           {/* Amount selector */}
           <div>
@@ -179,7 +189,7 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
                 {copied ? "Copied!" : "Copy"}
               </button>
               <a
-                href={`https://explorer.solana.com/address/${creatorWallet}?cluster=${EXPLORER_CLUSTER}`}
+                href={`https://explorer.solana.com/address/${creatorWallet}?cluster=${explorerCluster}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-gray-500 hover:text-accent-light transition-colors"
@@ -190,7 +200,9 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
             </div>
           </div>
         </div>
+        )}
 
+        {enabled && (
         <div className="px-5 pb-5">
           <button
             onClick={handleSendTip}
@@ -226,6 +238,7 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
             )}
           </button>
         </div>
+        )}
       </div>
     </div>
   );
