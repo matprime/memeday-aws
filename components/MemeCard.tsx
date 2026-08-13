@@ -9,6 +9,7 @@ import { useAppStore } from "@/lib/store";
 import { formatDistanceToNow } from "date-fns";
 import { CreatorAvatar } from "./CreatorAvatar";
 import { TipModal } from "./TipModal";
+import { useSolanaConfig } from "./WalletProvider";
 import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
@@ -23,6 +24,7 @@ function shortId(id: string) {
 
 export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
   const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
+  const { enabled, disabledMessage } = useSolanaConfig();
   const [votes, setVotes] = useState(meme.likeCount);
   const [tipOpen, setTipOpen] = useState(false);
 
@@ -165,7 +167,12 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
           </div>
 
           <button
-            onClick={() => addToast("Creator token investing coming soon via Bags!", "bags")}
+            onClick={() =>
+              addToast(
+                enabled ? "Creator token investing coming soon via Bags!" : disabledMessage,
+                enabled ? "bags" : "error"
+              )
+            }
             className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold text-bags bg-bags/10 hover:bg-bags/20 border border-bags/30 hover:border-bags/60 transition-all"
           >
             <Zap size={14} />
