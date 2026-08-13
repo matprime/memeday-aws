@@ -121,3 +121,100 @@ test("loud fail: invalid SOLANA_ENABLED throws at import", async () => {
     await assert.rejects(() => importNetworkModule());
   });
 });
+
+// The checks below pin the SOLANA_ENABLED/SOLANA_DISABLED_MESSAGE contract
+// that each on-chain entry point reads via useSolanaConfig (WalletProvider.tsx,
+// sourced from this module through app/layout.tsx). They don't render React —
+// no jsdom/testing-library in this repo — so they can't click a button and
+// assert on the resulting DOM. What they pin: the exact enabled/message pair
+// each component's gating logic branches on, so a change here (e.g. someone
+// renaming SOLANA_DISABLED_MESSAGE or flipping the boolean's meaning) fails
+// loudly instead of silently breaking a kill switch three components rely on.
+
+// InvestModal (Top Creators popup on the home page, and CreatorInvestButton
+// on the creator page — both mount the same InvestModal): handleBuy/handleSell
+// return early on `!enabled`, and the buy/sell form + action button are
+// replaced with a banner showing `disabledMessage` (InvestModal.tsx).
+test("kill switch: SOLANA_ENABLED=false — InvestModal reads enabled=false + disabledMessage", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "false" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, false);
+    assert.strictEqual(
+      mod.SOLANA_DISABLED_MESSAGE,
+      "On-chain features are temporarily disabled. Please check back soon."
+    );
+  });
+});
+
+test("kill switch: SOLANA_ENABLED=true — InvestModal reads enabled=true, buy/sell allowed", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "true" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, true);
+  });
+});
+
+// TipModal (Tip button on MemeCard): when !enabled, the tip form/QR code is
+// replaced with a banner showing `disabledMessage` and the "Send Tip" button
+// isn't rendered at all; handleSendTip also returns early on `!enabled` as a
+// defense-in-depth guard (TipModal.tsx).
+test("kill switch: SOLANA_ENABLED=false — TipModal reads enabled=false + disabledMessage", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "false" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, false);
+    assert.strictEqual(
+      mod.SOLANA_DISABLED_MESSAGE,
+      "On-chain features are temporarily disabled. Please check back soon."
+    );
+  });
+});
+
+test("kill switch: SOLANA_ENABLED=true — TipModal reads enabled=true, Send Tip allowed", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "true" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, true);
+  });
+});
+
+// PostMemeModal "Mint as NFT" toggle: clicking it while `!enabled && !isNFT`
+// shows a toast with `disabledMessage` and leaves the toggle off instead of
+// enabling NFT mode; handleSubmit has the same guard before calling
+// mintMemeNft, so even a pre-toggled isNFT state can't mint while disabled
+// (PostMemeModal.tsx lines ~132-134, ~288-292).
+test("kill switch: SOLANA_ENABLED=false — PostMemeModal reads enabled=false + disabledMessage", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "false" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, false);
+    assert.strictEqual(
+      mod.SOLANA_DISABLED_MESSAGE,
+      "On-chain features are temporarily disabled. Please check back soon."
+    );
+  });
+});
+
+test("kill switch: SOLANA_ENABLED=true — PostMemeModal reads enabled=true, minting allowed", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "true" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, true);
+  });
+});
+
+// MemeCard "Invest in creator's token" button (shown under every meme,
+// including on the creator page): onClick toasts a "coming soon" message when
+// `enabled`, or `disabledMessage` when `!enabled` (MemeCard.tsx).
+test("kill switch: SOLANA_ENABLED=false — MemeCard invest button shows disabledMessage, not \"coming soon\"", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "false" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, false);
+    assert.strictEqual(
+      mod.SOLANA_DISABLED_MESSAGE,
+      "On-chain features are temporarily disabled. Please check back soon."
+    );
+  });
+});
+
+test("kill switch: SOLANA_ENABLED=true — MemeCard invest button shows \"coming soon\" toast", async () => {
+  await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_ENABLED: "true" }, async () => {
+    const mod = await importNetworkModule();
+    assert.strictEqual(mod.SOLANA_ENABLED, true);
+  });
+});
