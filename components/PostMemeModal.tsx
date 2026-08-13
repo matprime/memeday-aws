@@ -8,6 +8,7 @@ import { useAppStore } from "@/lib/store";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
 import { mintMemeNft } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
+import { useSolanaConfig } from "@/components/WalletProvider";
 
 interface Props {
   onClose: () => void;
@@ -15,6 +16,7 @@ interface Props {
 
 export function PostMemeModal({ onClose }: Props) {
   const router = useRouter();
+  const { rpcUrl, enabled, disabledMessage } = useSolanaConfig();
   const wallet = useWallet();
   const { publicKey } = wallet;
   const { cognitoToken, authMethod, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
@@ -125,17 +127,19 @@ export function PostMemeModal({ onClose }: Props) {
       setStep("validating");
       await waitForValidation(pendingId);
 
-      // 2. Mint NFT on Solana devnet (Phantom will prompt for signature)
+      // 2. Mint NFT on Solana (Phantom will prompt for signature)
       let mintAddress: string | null = null;
       if (isNFT) {
-        if (authMethod !== "wallet") {
+        if (!enabled) {
+          addToast(disabledMessage, "error");
+        } else if (authMethod !== "wallet") {
           addToast("NFT minting is only available for wallet-connected users.", "error");
         } else {
           setStep("minting");
           // The meme row doesn't exist yet, so mint events carry no memeId —
           // they're joined to the upload by session, not by meme.
           track(EVENTS.mintStarted);
-          mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim());
+          mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim(), rpcUrl);
           track(EVENTS.mintConfirmed, { mintAddress });
           addToast("NFT minted on Solana!", "success");
         }
@@ -282,6 +286,10 @@ export function PostMemeModal({ onClose }: Props) {
             </div>
             <button
               onClick={() => {
+                if (!enabled && !isNFT) {
+                  addToast(disabledMessage, "error");
+                  return;
+                }
                 if (authMethod !== "wallet" && !isNFT) {
                   addToast("NFT minting is only available for wallet-connected users.", "error");
                   return;

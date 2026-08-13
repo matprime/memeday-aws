@@ -36,7 +36,7 @@ Registered as super-properties on every event:
 | Property | Value |
 |---|---|
 | `platform` | `"web"` |
-| `network` | `NEXT_PUBLIC_SOLANA_NETWORK`, default `"devnet"` |
+| `network` | `SOLANA_NETWORK` (see `lib/solana/network.ts`), passed to `initAnalytics()` |
 | `environment` | `NODE_ENV` — `"development"` locally, `"production"` on Vercel |
 
 **Every saved insight must filter on `environment = "production"`.** The PostHog free
@@ -87,4 +87,4 @@ everything by `network` once prod runs mainnet.
 |---|---|---|
 | `NEXT_PUBLIC_POSTHOG_KEY` | Vercel project settings (prod), `.env.local` (dev) | Yes for events to send |
 | `NEXT_PUBLIC_POSTHOG_HOST` | same | No — defaults to `https://eu.i.posthog.com` (this project is on PostHog EU) |
-| `NEXT_PUBLIC_SOLANA_NETWORK` | same | No — defaults to `devnet` |
+| `SOLANA_NETWORK` | see README — required, no default | Yes (required by `lib/solana/network.ts`, not analytics-specific) |

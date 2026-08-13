@@ -95,7 +95,10 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 NEXT_PUBLIC_POSTHOG_KEY=     # blank locally — analytics no-op; see docs/ANALYTICS_EVENTS.md
 NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com
-NEXT_PUBLIC_SOLANA_NETWORK=devnet
+
+SOLANA_NETWORK=devnet                          # devnet | mainnet — see "Solana network config" below
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_ENABLED=true                            # kill switch — true | false
 ```
 
 Deployments read neither file — set the app vars in the Vercel project settings.
@@ -106,6 +109,38 @@ instead of silently reading the wrong stack.
 npm run dev
 # Open http://localhost:3000
 ```
+
+## Solana network config
+
+`lib/solana/network.ts` is the single choke point for Solana network config — every
+RPC/mint/tip/wallet code path imports network name, RPC URL, explorer cluster, and the
+kill switch from there. It fails loudly at import time (same pattern as
+`lib/dynamo.ts`): missing or invalid values throw immediately, there is no default
+network and no silent fallback.
+
+| Var | Values | What it does |
+|---|---|---|
+| `SOLANA_NETWORK` | `devnet` \| `mainnet` | Which Solana cluster the app talks to. Required — no default. |
+| `SOLANA_RPC_URL` | any RPC endpoint URL | The RPC endpoint used for that network. Required — no default. |
+| `SOLANA_ENABLED` | `true` \| `false` | Kill switch for all on-chain features (tips, mint, resale). `false` shows a "temporarily disabled" message in the tip and mint UI instead of silently no-opping. Required — no default. |
+
+**Mainnet guard.** `SOLANA_NETWORK=mainnet` is only accepted when `VERCEL_ENV=production`
+exactly. Any other value — `preview`, `development`, or unset (local dev, CI) — rejects a
+mainnet request outright (throws at import) rather than silently downgrading it to
+devnet. `VERCEL_ENV` is populated automatically by Vercel; **never set it manually**, in
+`.env`, `.env.local`, or Vercel project settings — it's what prevents mainnet from being
+accidentally enabled on a Preview deployment.
+
+**Configuring in Vercel:** set `SOLANA_NETWORK`, `SOLANA_RPC_URL`, and `SOLANA_ENABLED`
+in the project's Environment Variables settings, scoped per environment:
+- **Production** — `SOLANA_NETWORK=mainnet` (once ready), a mainnet `SOLANA_RPC_URL`.
+- **Preview** — `SOLANA_NETWORK=devnet`, a devnet `SOLANA_RPC_URL`. Setting `mainnet`
+  here fails the build — Preview's `VERCEL_ENV` is never `production`.
+
+**Kill switch.** Flip `SOLANA_ENABLED` to `false` in the Vercel project settings (either
+scope) and redeploy — no code change needed. Tips and NFT minting show the disabled
+message instead of attempting the on-chain action. Set it back to `true` and redeploy to
+re-enable.
 
 ## CI
 

@@ -6,6 +6,13 @@ import { BagsToastContainer } from "@/components/BagsToast";
 import { WalletAuthSync } from "@/components/WalletAuthSync";
 import { AnalyticsInit } from "@/components/AnalyticsInit";
 import { Analytics } from "@vercel/analytics/next";
+import {
+  SOLANA_NETWORK,
+  SOLANA_RPC_URL,
+  SOLANA_EXPLORER_CLUSTER,
+  SOLANA_ENABLED,
+  SOLANA_DISABLED_MESSAGE,
+} from "@/lib/solana/network";
 
 export const metadata: Metadata = {
   title: "MemeDay — Creator Economy on Solana",
@@ -21,7 +28,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <SolanaWalletProvider>
+        <SolanaWalletProvider
+          network={SOLANA_NETWORK}
+          rpcUrl={SOLANA_RPC_URL}
+          explorerCluster={SOLANA_EXPLORER_CLUSTER}
+          enabled={SOLANA_ENABLED}
+          disabledMessage={SOLANA_DISABLED_MESSAGE}
+        >
           <WalletAuthSync />
           <AnalyticsInit />
           <Navbar />

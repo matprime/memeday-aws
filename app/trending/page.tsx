@@ -3,8 +3,10 @@
 import { getTrendingTokens, getSpikingTokens } from "@/lib/data";
 import { TrendingTokenCard } from "@/components/TrendingTokenCard";
 import { TrendingUp, AlertTriangle, Zap } from "lucide-react";
+import { useSolanaConfig } from "@/components/WalletProvider";
 
 export default function TrendingPage() {
+  const { network } = useSolanaConfig();
   const trending = getTrendingTokens();
   const spiking = getSpikingTokens();
 
@@ -55,8 +57,8 @@ export default function TrendingPage() {
       <div className="mt-8 text-center text-xs text-gray-600">
         <p>
           All token prices and trades are executed via{" "}
-          <span className="text-bags font-semibold">Bags</span> on Solana
-          devnet
+          <span className="text-bags font-semibold">Bags</span> on Solana{" "}
+          {network}
         </p>
       </div>
     </div>
