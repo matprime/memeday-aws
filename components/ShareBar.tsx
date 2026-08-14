@@ -13,7 +13,16 @@ interface Props {
   triggerClassName: string;
 }
 
-type Channel = "x" | "telegram" | "whatsapp" | "reddit" | "facebook" | "copy" | "native";
+export type Channel = "x" | "telegram" | "whatsapp" | "reddit" | "facebook" | "copy" | "native";
+export const CHANNELS: readonly Channel[] = [
+  "x",
+  "telegram",
+  "whatsapp",
+  "reddit",
+  "facebook",
+  "copy",
+  "native",
+];
 
 function buildShareUrl(memeId: string, channel: Channel) {
   const origin = window.location.origin;
