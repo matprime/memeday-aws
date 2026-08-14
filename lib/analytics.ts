@@ -14,8 +14,6 @@ export const EVENTS = {
   tipLinkOpened: "tip_link_opened",
   mintStarted: "mint_started",
   mintConfirmed: "mint_confirmed",
-  // Not emitted yet — the share feature doesn't exist. Reserved here so the
-  // share-tracking task uses these exact names.
   shareClicked: "share_clicked",
   visitFromShare: "visit_from_share",
 } as const;
