@@ -59,10 +59,10 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
     let shareLink: string;
     switch (channel) {
       case "x":
-        shareLink = `https://twitter.com/intent/tweet?text=${text}&url=${encodedUrl}`;
+        shareLink = `https://x.com/intent/tweet?text=${text}&url=${encodedUrl}`;
         break;
       case "telegram":
-        shareLink = `https://t.me/share/url?url=${encodedUrl}&text=${text}`;
+        shareLink = `https://t.me/share/url?text=${text}&url=${encodedUrl}`;
         break;
       case "whatsapp":
         shareLink = `https://wa.me/?text=${encodeURIComponent(`${shareText} ${url}`)}`;
