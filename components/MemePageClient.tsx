@@ -6,6 +6,7 @@ import { DbMeme, DbComment, Creator } from "@/lib/types";
 import { MemeActionBar } from "./MemeActionBar";
 import { CommentSection } from "./CommentSection";
 import { EVENTS, track } from "@/lib/analytics";
+import { CHANNELS } from "./ShareBar";
 
 interface Props {
   meme: DbMeme;
@@ -20,7 +21,7 @@ export function MemePageClient({ meme, creator, initialComments }: Props) {
   useEffect(() => {
     if (searchParams.get("ref") !== "share") return;
     const channel = searchParams.get("ch");
-    if (!channel) return;
+    if (!channel || !CHANNELS.includes(channel as (typeof CHANNELS)[number])) return;
 
     // Once per session per meme+channel, so refreshing the landing page
     // doesn't inflate visit_from_share against a single share_clicked.
