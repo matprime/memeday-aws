@@ -9,6 +9,7 @@ import { useAppStore } from "@/lib/store";
 import { formatDistanceToNow } from "date-fns";
 import { CreatorAvatar } from "./CreatorAvatar";
 import { TipModal } from "./TipModal";
+import { ShareBar } from "./ShareBar";
 import { useSolanaConfig } from "./WalletProvider";
 import { EVENTS, track } from "@/lib/analytics";
 
@@ -156,6 +157,14 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
                 Buy
               </button>
             )}
+
+            <ShareBar
+              memeId={meme.id}
+              caption={meme.caption}
+              creatorHandle={displayLabel}
+              surface="feed"
+              triggerClassName="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white bg-bg/60 hover:bg-white/10 border border-border/50 transition-colors"
+            />
 
             <button
               onClick={() => setTipOpen(true)}
