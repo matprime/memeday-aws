@@ -143,6 +143,7 @@ export async function getLeaderboardCounts(): Promise<
     .sort((a, b) => b.memeCount - a.memeCount);
 }
 
+// Flagged for review = never reachable by direct URL (KAN-44).
 export async function getMemeById(id: string): Promise<DbMeme | null> {
   noStore();
   const result = await dynamo.send(
@@ -152,10 +153,13 @@ export async function getMemeById(id: string): Promise<DbMeme | null> {
     })
   );
   if (!result.Item) return null;
-  return parseMeme(result.Item as Record<string, unknown>);
+  const meme = parseMeme(result.Item as Record<string, unknown>);
+  if (meme.status === "pending_review") return null;
+  return meme;
 }
 
 // Query GSI1 to get memes created by a specific user (creatorId = Cognito sub).
+// Excludes pending_review: flagged uploads never appear on a creator profile (KAN-44).
 export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
   noStore();
   const result = await dynamo.send(
@@ -169,9 +173,9 @@ export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
       },
     })
   );
-  return (result.Items ?? []).map((item) =>
-    parseMeme(item as Record<string, unknown>)
-  );
+  return (result.Items ?? [])
+    .map((item) => parseMeme(item as Record<string, unknown>))
+    .filter((meme) => meme.status !== "pending_review");
 }
 
 // Created before the S3 presigned URL is issued so the S3-triggered validation

@@ -24,6 +24,13 @@ function padScore(n: number): string {
   return Math.max(0, n).toString().padStart(15, "0");
 }
 
+// Flagged-for-review memes must never reach FEED#GLOBAL / GSI3 (KAN-44).
+// Every other status (active, listed, sold, and the pre-KAN-44 default of
+// undefined) is feed-eligible.
+function isCleanStatus(status: unknown): boolean {
+  return status !== "pending_review";
+}
+
 async function upsertFeedItem(meme: Record<string, unknown>): Promise<void> {
   const score = (meme.score as number) ?? 0;
   await docClient.send(
@@ -78,8 +85,10 @@ export const handler: DynamoDBStreamHandler = async (event) => {
         const meme = unmarshall(
           record.dynamodb.NewImage as Record<string, AttributeValue>
         );
-        await upsertFeedItem(meme);
-        await adjustLeaderboard(meme.creatorId as string, 1);
+        if (isCleanStatus(meme.status)) {
+          await upsertFeedItem(meme);
+          await adjustLeaderboard(meme.creatorId as string, 1);
+        }
       } else if (
         record.eventName === "MODIFY" &&
         record.dynamodb?.NewImage &&
@@ -88,11 +97,23 @@ export const handler: DynamoDBStreamHandler = async (event) => {
         const newMeme = unmarshall(
           record.dynamodb.NewImage as Record<string, AttributeValue>
         );
-        const oldScore = (unmarshall(
+        const oldMeme = unmarshall(
           record.dynamodb.OldImage as Record<string, AttributeValue>
-        ).score as number) ?? 0;
+        );
+        const oldScore = (oldMeme.score as number) ?? 0;
         const newScore = (newMeme.score as number) ?? 0;
-        if (newScore !== oldScore) {
+        const wasClean = isCleanStatus(oldMeme.status);
+        const isClean = isCleanStatus(newMeme.status);
+
+        if (wasClean && !isClean) {
+          // Flagged after publish (the finalize-before-screen race) — pull it
+          // back out of the feed and undo its leaderboard count.
+          await deleteFeedItem(newMeme.memeId as string, oldScore);
+          await adjustLeaderboard(newMeme.creatorId as string, -1);
+        } else if (!wasClean && isClean) {
+          await upsertFeedItem(newMeme);
+          await adjustLeaderboard(newMeme.creatorId as string, 1);
+        } else if (wasClean && isClean && newScore !== oldScore) {
           await deleteFeedItem(newMeme.memeId as string, oldScore);
           await upsertFeedItem(newMeme);
         }
@@ -100,8 +121,10 @@ export const handler: DynamoDBStreamHandler = async (event) => {
         const meme = unmarshall(
           record.dynamodb.OldImage as Record<string, AttributeValue>
         );
-        await deleteFeedItem(meme.memeId as string, (meme.score as number) ?? 0);
-        await adjustLeaderboard(meme.creatorId as string, -1);
+        if (isCleanStatus(meme.status)) {
+          await deleteFeedItem(meme.memeId as string, (meme.score as number) ?? 0);
+          await adjustLeaderboard(meme.creatorId as string, -1);
+        }
       }
     } catch (err) {
       console.error(`Error on ${pk}/${sk} [${record.eventName}]:`, err);

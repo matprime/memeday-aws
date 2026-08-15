@@ -80,7 +80,7 @@ export interface DbMeme {
   imageUrl: string;         // CloudFront URL (derived from s3Key at read time)
   caption: string;
   nftMint?: string;         // Solana mint address
-  status: "active" | "listed" | "sold";
+  status: "active" | "listed" | "sold" | "pending_review"; // pending_review = flagged by content moderation (KAN-44), never feed/profile/direct-URL visible
   likeCount: number;
   commentCount: number;
   score: number;
