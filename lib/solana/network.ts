@@ -29,7 +29,19 @@ const rawRpcUrl = process.env.SOLANA_RPC_URL;
 if (!rawRpcUrl) {
   throw new Error("Missing SOLANA_RPC_URL");
 }
+// Server-only. A paid provider endpoint carries its API key in the URL, and
+// anything handed to a client component ships in the page the browser
+// downloads — so this value must never be passed down the React tree. It is
+// read by app/api/rpc/route.ts and nothing else.
 export const SOLANA_RPC_URL = rawRpcUrl;
+
+// What the browser gets instead: our own proxy route. Kept as a path rather
+// than an absolute URL because the correct origin differs per environment
+// (localhost, a per-deployment preview host, a custom production domain), and
+// guessing it from VERCEL_URL would point custom-domain traffic at a different
+// origin and break same-origin fetches. components/WalletProvider.tsx resolves
+// it against window.location.origin, which is right everywhere by definition.
+export const SOLANA_CLIENT_RPC_PATH = "/api/rpc";
 
 // Solana's own cluster identifiers ("mainnet-beta") differ from our app-level
 // network name ("mainnet") — explorer links and clusterApiUrl() need this form.
