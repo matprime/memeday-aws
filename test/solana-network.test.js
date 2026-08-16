@@ -218,3 +218,84 @@ test("kill switch: SOLANA_ENABLED=true — MemeCard invest button shows \"coming
     assert.strictEqual(mod.SOLANA_ENABLED, true);
   });
 });
+
+// Network/endpoint mismatch guard. SOLANA_NETWORK drives the UI, explorer links
+// and the mainnet-requires-production check, but nothing tied it to the endpoint
+// actually being called — so devnet + a mainnet URL would move real SOL while
+// every label said devnet. One mis-scoped Vercel variable was enough.
+
+test("mismatch guard: devnet + a mainnet RPC URL is rejected", async () => {
+  for (const url of [
+    "https://api.mainnet-beta.solana.com",
+    "https://example.solana-mainnet.quiknode.pro/token/",
+    "https://mainnet.helius-rpc.com/?api-key=x",
+  ]) {
+    await withEnv({ SOLANA_NETWORK: "devnet", SOLANA_RPC_URL: url }, async () => {
+      await assert.rejects(
+        () => importNetworkModule(),
+        /points at mainnet/,
+        `should reject: ${url}`
+      );
+    });
+  }
+});
+
+test("mismatch guard: mainnet + a devnet/testnet RPC URL is rejected", async () => {
+  for (const url of [
+    "https://api.devnet.solana.com",
+    "https://example.solana-devnet.quiknode.pro/token/",
+    "https://api.testnet.solana.com",
+  ]) {
+    await withEnv(
+      { SOLANA_NETWORK: "mainnet", VERCEL_ENV: "production", SOLANA_RPC_URL: url },
+      async () => {
+        await assert.rejects(
+          () => importNetworkModule(),
+          /points at devnet\/testnet/,
+          `should reject: ${url}`
+        );
+      }
+    );
+  }
+});
+
+test("mismatch guard: a matching network and URL is allowed", async () => {
+  await withEnv(
+    { SOLANA_NETWORK: "devnet", SOLANA_RPC_URL: "https://api.devnet.solana.com" },
+    async () => {
+      const mod = await importNetworkModule();
+      assert.strictEqual(mod.SOLANA_NETWORK, "devnet");
+    }
+  );
+
+  await withEnv(
+    {
+      SOLANA_NETWORK: "mainnet",
+      VERCEL_ENV: "production",
+      SOLANA_RPC_URL: "https://example.solana-mainnet.quiknode.pro/token/",
+    },
+    async () => {
+      const mod = await importNetworkModule();
+      assert.strictEqual(mod.SOLANA_NETWORK, "mainnet");
+    }
+  );
+});
+
+// The check can only act on what the URL declares. A private or self-hosted
+// endpoint naming no cluster must not be blocked — failing closed here would
+// break a legitimate deployment for a guess.
+test("mismatch guard: a custom hostname naming no cluster is allowed on either network", async () => {
+  for (const network of ["devnet", "mainnet"]) {
+    await withEnv(
+      {
+        SOLANA_NETWORK: network,
+        VERCEL_ENV: "production",
+        SOLANA_RPC_URL: "https://rpc.internal.example.com/solana",
+      },
+      async () => {
+        const mod = await importNetworkModule();
+        assert.strictEqual(mod.SOLANA_NETWORK, network);
+      }
+    );
+  }
+});
