@@ -8,7 +8,7 @@ import { AnalyticsInit } from "@/components/AnalyticsInit";
 import { Analytics } from "@vercel/analytics/next";
 import {
   SOLANA_NETWORK,
-  SOLANA_RPC_URL,
+  SOLANA_CLIENT_RPC_PATH,
   SOLANA_EXPLORER_CLUSTER,
   SOLANA_ENABLED,
   SOLANA_DISABLED_MESSAGE,
@@ -30,7 +30,7 @@ export default function RootLayout({
       <body>
         <SolanaWalletProvider
           network={SOLANA_NETWORK}
-          rpcUrl={SOLANA_RPC_URL}
+          rpcPath={SOLANA_CLIENT_RPC_PATH}
           explorerCluster={SOLANA_EXPLORER_CLUSTER}
           enabled={SOLANA_ENABLED}
           disabledMessage={SOLANA_DISABLED_MESSAGE}

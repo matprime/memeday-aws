@@ -54,6 +54,25 @@ data model" below for the full schema.
 - Bags.fm: MOCKED (simulated SDK). Mainnet, post-deadline only. The single
   simulated link in the diagram.
 
+#### RPC access
+All browser RPC traffic goes through `/api/rpc` (`app/api/rpc/route.ts`), never
+straight to the provider. A paid provider endpoint carries its API key in the
+URL, and anything handed to a client component ships in the page the browser
+downloads — so `SOLANA_RPC_URL` is server-only and the client is given
+`SOLANA_CLIENT_RPC_PATH` (`/api/rpc`) instead, resolved against
+`window.location.origin` in `components/WalletProvider.tsx`.
+
+The proxy forwards only an allowlist of JSON-RPC methods
+(`lib/solana/rpc-allowlist.ts`); without that it would be a free
+general-purpose RPC billed to us. Adding an on-chain feature that needs a new
+method means adding it there.
+
+Consequence: the proxy is HTTPS-only, so the WebSocket `signatureSubscribe`
+that `Connection.confirmTransaction` normally waits on is unavailable. Both the
+tip and mint paths confirm by polling `getSignatureStatuses` instead
+(`lib/solana/confirm.ts`); `lib/nft.ts` overrides umi's `confirmTransaction`
+for the same reason. Any new send-and-confirm path must do the same.
+
 ## Single-table data model
 
 Base table `MemeDay`. `PK` = partition key, `SK` = sort key. All entities are

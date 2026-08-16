@@ -23,6 +23,10 @@ const WalletModalProvider = _WMP as unknown as React.FC<{ children: React.ReactN
 // (TipModal, PostMemeModal, analytics) reaches those values.
 interface SolanaConfig {
   network: SolanaNetwork;
+  // The absolute URL of our own /api/rpc proxy, not the provider endpoint —
+  // the provider URL carries an API key and stays server-side. Consumers
+  // (TipModal, PostMemeModal via lib/nft.ts) can treat this as a normal RPC
+  // URL; it just happens to point at us.
   rpcUrl: string;
   explorerCluster: SolanaExplorerCluster;
   enabled: boolean;
@@ -41,14 +45,30 @@ export function useSolanaConfig(): SolanaConfig {
 
 export function SolanaWalletProvider({
   network,
-  rpcUrl,
+  rpcPath,
   explorerCluster,
   enabled,
   disabledMessage,
   children,
-}: SolanaConfig & {
+}: Omit<SolanaConfig, "rpcUrl"> & {
+  rpcPath: string;
   children: React.ReactNode;
 }) {
+  // A path is passed down rather than an absolute URL because only the browser
+  // knows the right origin (localhost, a per-deployment preview host, or a
+  // custom production domain). web3.js rejects a relative endpoint — "Endpoint
+  // URL must start with `http:` or `https:`" — so it is resolved here.
+  // During SSR there is no window, but no RPC call happens server-side either;
+  // the placeholder is replaced on the client render.
+  const rpcUrl = useMemo(
+    () =>
+      new URL(
+        rpcPath,
+        typeof window === "undefined" ? "http://localhost" : window.location.origin
+      ).toString(),
+    [rpcPath]
+  );
+
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
   const addToast = useAppStore((s) => s.addToast);
 
