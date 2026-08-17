@@ -7,7 +7,8 @@ import {
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { S3Handler } from "aws-lambda";
-import sharp, { FormatEnum } from "sharp";
+import sharp from "sharp";
+import type { FormatEnum } from "sharp";
 
 const s3 = new S3Client({});
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -24,8 +25,15 @@ const EXT_TO_FORMAT: Record<string, string> = {
   jpg: "jpeg",
   jpeg: "jpeg",
   png: "png",
-  gif: "gif",
-  webp: "webp",
+};
+
+// GIF/WEBP are rejected explicitly (distinct from "unsupported extension")
+// because Rekognition's DetectModerationLabels only supports JPEG/PNG, so
+// these formats can't be screened yet. Temporary until frame-extraction
+// support lands (KAN-48).
+const UNSCREENABLE_FORMATS: Record<string, string> = {
+  gif: "GIF and WEBP are not currently supported. Please upload a JPEG or PNG.",
+  webp: "GIF and WEBP are not currently supported. Please upload a JPEG or PNG.",
 };
 
 // Key format: uploads/<userId>/<pendingId>.<ext> (see app/api/upload-url).
@@ -95,6 +103,12 @@ export const handler: S3Handler = async (event) => {
 
     try {
       const ext = key.split(".").pop()?.toLowerCase() ?? "";
+
+      if (UNSCREENABLE_FORMATS[ext]) {
+        await reject(key, pendingId, UNSCREENABLE_FORMATS[ext]);
+        continue;
+      }
+
       const expectedFormat = EXT_TO_FORMAT[ext];
       if (!expectedFormat) {
         await reject(key, pendingId, `unsupported extension: ${ext}`);
@@ -166,3 +180,5 @@ export const handler: S3Handler = async (event) => {
     }
   }
 };
+
+export { EXT_TO_FORMAT, UNSCREENABLE_FORMATS };
