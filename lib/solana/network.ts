@@ -29,7 +29,50 @@ const rawRpcUrl = process.env.SOLANA_RPC_URL;
 if (!rawRpcUrl) {
   throw new Error("Missing SOLANA_RPC_URL");
 }
+// Server-only. A paid provider endpoint carries its API key in the URL, and
+// anything handed to a client component ships in the page the browser
+// downloads — so this value must never be passed down the React tree. It is
+// read by app/api/rpc/route.ts and nothing else.
 export const SOLANA_RPC_URL = rawRpcUrl;
+
+// What the browser gets instead: our own proxy route. Kept as a path rather
+// than an absolute URL because the correct origin differs per environment
+// (localhost, a per-deployment preview host, a custom production domain), and
+// guessing it from VERCEL_URL would point custom-domain traffic at a different
+// origin and break same-origin fetches. components/WalletProvider.tsx resolves
+// it against window.location.origin, which is right everywhere by definition.
+export const SOLANA_CLIENT_RPC_PATH = "/api/rpc";
+
+// Guard against a network/endpoint mismatch. SOLANA_NETWORK drives the UI, the
+// explorer links and the mainnet-requires-production check above, but nothing
+// tied it to the endpoint actually being called — so SOLANA_NETWORK=devnet
+// paired with a mainnet SOLANA_RPC_URL would move real SOL while every label in
+// the app said devnet. One mis-scoped Vercel variable was enough.
+//
+// Provider hostnames encode the cluster (QuickNode .solana-mainnet./.solana-devnet.,
+// Helius mainnet./devnet.helius-rpc.com, public api.mainnet-beta./api.devnet.),
+// so the realistic mistake is cheap to catch. A custom hostname naming neither
+// is allowed through: this can only catch what the URL actually declares.
+const rpcUrlLower = rawRpcUrl.toLowerCase();
+const urlSaysMainnet = rpcUrlLower.includes("mainnet");
+const urlSaysNonMainnet =
+  rpcUrlLower.includes("devnet") || rpcUrlLower.includes("testnet");
+
+if (SOLANA_NETWORK === "devnet" && urlSaysMainnet && !urlSaysNonMainnet) {
+  throw new Error(
+    "SOLANA_NETWORK=devnet but SOLANA_RPC_URL points at mainnet. " +
+      "This would spend real SOL while the app reports devnet. " +
+      "Set a devnet endpoint, or set SOLANA_NETWORK=mainnet deliberately."
+  );
+}
+
+if (SOLANA_NETWORK === "mainnet" && urlSaysNonMainnet && !urlSaysMainnet) {
+  throw new Error(
+    "SOLANA_NETWORK=mainnet but SOLANA_RPC_URL points at devnet/testnet. " +
+      "Real-money transactions would be sent to a test cluster. " +
+      "Set the mainnet endpoint for this environment."
+  );
+}
 
 // Solana's own cluster identifiers ("mainnet-beta") differ from our app-level
 // network name ("mainnet") — explorer links and clusterApiUrl() need this form.

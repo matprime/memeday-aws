@@ -4,9 +4,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Gift, Copy, ExternalLink, CheckCircle, AlertCircle } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
-import { SystemProgram, Transaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import {
+  SystemProgram,
+  Transaction,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  Keypair,
+} from "@solana/web3.js";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "./WalletProvider";
+import {
+  buildSolanaPayUrl,
+  classifyTipError,
+  validateAmount,
+} from "@/lib/solana/tip";
+import { pollSignatureConfirmation } from "@/lib/solana/confirm";
 
 interface Props {
   creatorWallet: string;
@@ -17,16 +29,14 @@ interface Props {
 
 const PRESETS = ["0.01", "0.05", "0.1"] as const;
 
+// Headroom for the signature fee so the pre-flight check doesn't wave through a
+// tip that then fails on-chain for being a few lamports short.
+const FEE_BUFFER_LAMPORTS = 10_000;
+
 type TxStatus = "idle" | "sending" | "success" | "error";
 
 function shortWallet(w: string) {
   return `${w.slice(0, 6)}…${w.slice(-4)}`;
-}
-
-// Solana Pay transfer request URL — spec: https://docs.solanapay.com/spec#transfer-request
-function buildSolanaPayUrl(recipient: string, amount: string, message: string) {
-  const params = new URLSearchParams({ amount, label: "MemeDay", message });
-  return `solana:${recipient}?${params}`;
 }
 
 export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props) {
@@ -34,20 +44,29 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
   const [amount, setAmount] = useState("0.01");
   const [copied, setCopied] = useState(false);
   const [txStatus, setTxStatus] = useState<TxStatus>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [txSig, setTxSig] = useState<string | null>(null);
 
   const { publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
 
-  const isValid = !isNaN(parseFloat(amount)) && parseFloat(amount) > 0;
+  const amountCheck = validateAmount(amount);
+  const isValid = amountCheck.level !== "block";
+
+  // One throwaway pubkey per modal open, deliberately not keyed on the amount:
+  // it must stay stable while the user edits, so the QR they eventually scan
+  // carries the same reference that the on-chain transaction does.
+  const reference = useMemo(() => Keypair.generate().publicKey, []);
 
   const solanaPayUrl = useMemo(
     () =>
       buildSolanaPayUrl(
         creatorWallet,
         isValid ? amount : "0.01",
-        memeCaption ? `Tip: ${memeCaption.slice(0, 50)}` : "Tip via MemeDay"
+        memeCaption ? `Tip: ${memeCaption.slice(0, 50)}` : "Tip via MemeDay",
+        reference.toBase58()
       ),
-    [creatorWallet, amount, isValid, memeCaption]
+    [creatorWallet, amount, isValid, memeCaption, reference]
   );
 
   // Once per modal open, not per amount change — the QR is the funnel step,
@@ -67,29 +86,69 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
 
   const handleSendTip = async () => {
     if (!enabled) return;
+    if (amountCheck.level === "block") return;
+
     if (!publicKey || !sendTransaction) {
       track(EVENTS.tipLinkOpened, { memeId, amountSol: parseFloat(amount) });
       window.location.href = solanaPayUrl;
       return;
     }
 
+    setErrorMsg(null);
+    setTxSig(null);
+
     try {
       setTxStatus("sending");
       const lamports = Math.round(parseFloat(amount) * LAMPORTS_PER_SOL);
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: new PublicKey(creatorWallet),
-          lamports,
-        })
-      );
+
+      // Recipient is validated before the balance call so an unusable creator
+      // wallet is reported as such rather than as a funding problem.
+      const recipient = new PublicKey(creatorWallet);
+
+      // Pre-flight: catching this here gives an exact figure, which the raw
+      // on-chain "insufficient lamports" error can't.
+      const balance = await connection.getBalance(publicKey);
+      if (balance < lamports + FEE_BUFFER_LAMPORTS) {
+        const needed = (lamports + FEE_BUFFER_LAMPORTS) / LAMPORTS_PER_SOL;
+        setErrorMsg(
+          `Not enough SOL — you need about ${needed.toFixed(4)} SOL including fees, ` +
+            `and your wallet holds ${(balance / LAMPORTS_PER_SOL).toFixed(4)}.`
+        );
+        setTxStatus("error");
+        return;
+      }
+
+      const instruction = SystemProgram.transfer({
+        fromPubkey: publicKey,
+        toPubkey: recipient,
+        lamports,
+      });
+      // Same reference as the QR, as a read-only non-signer key: it does
+      // nothing on-chain but makes the tip findable on an explorer afterwards.
+      instruction.keys.push({
+        pubkey: reference,
+        isSigner: false,
+        isWritable: false,
+      });
+
+      const transaction = new Transaction().add(instruction);
       const sig = await sendTransaction(transaction, connection);
-      await connection.confirmTransaction(sig, "confirmed");
+      setTxSig(sig);
+
+      // Polling rather than connection.confirmTransaction: the endpoint is our
+      // /api/rpc proxy, which cannot serve the WebSocket that confirmation
+      // would otherwise subscribe to. See lib/solana/confirm.ts.
+      await pollSignatureConfirmation(connection, sig, "confirmed");
       setTxStatus("success");
-      setTimeout(() => setTxStatus("idle"), 3000);
-    } catch {
+    } catch (err) {
+      const { kind, message } = classifyTipError(err);
+      if (kind === "cancelled") {
+        // A deliberate cancel isn't a failure — return quietly to the form.
+        setTxStatus("idle");
+        return;
+      }
+      setErrorMsg(message);
       setTxStatus("error");
-      setTimeout(() => setTxStatus("idle"), 3000);
     }
   };
 
@@ -149,6 +208,9 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
                 </button>
               ))}
             </div>
+            {amountCheck.message && (
+              <p className="mt-1.5 text-xs text-red-400">{amountCheck.message}</p>
+            )}
           </div>
 
           {/* QR code — white background required for scanner contrast */}
@@ -199,6 +261,25 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
               </a>
             </div>
           </div>
+
+          {errorMsg && (
+            <div className="flex items-start gap-2 bg-red-900/20 border border-red-700/40 rounded-xl px-4 py-3 text-xs text-red-300">
+              <AlertCircle size={14} className="mt-px shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {txSig && txStatus === "success" && (
+            <a
+              href={`https://explorer.solana.com/tx/${txSig}?cluster=${explorerCluster}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 text-xs text-accent-light hover:underline"
+            >
+              <ExternalLink size={11} />
+              View transaction
+            </a>
+          )}
         </div>
         )}
 
