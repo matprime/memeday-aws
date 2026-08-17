@@ -16,6 +16,10 @@ for (const envFile of [".env.local", ".env"]) {
   }
 }
 
+// Not deployed by any real env file yet (new in this change) — pin a
+// deterministic value so tests can assert on it.
+process.env.MODERATION_HANDLER_FUNCTION_NAME ??= "moderation-handler-test-fn";
+
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "next/cache") {
@@ -75,4 +79,112 @@ test("UNSCREENABLE_FORMATS: jpg/jpeg/png are not gated here — they fall throug
   assert.strictEqual(UNSCREENABLE_FORMATS.jpg, undefined);
   assert.strictEqual(UNSCREENABLE_FORMATS.jpeg, undefined);
   assert.strictEqual(UNSCREENABLE_FORMATS.png, undefined);
+});
+
+// --- handler(): S3/DynamoDB/Lambda clients mocked by swapping .send on the
+// exported client instances — no live AWS calls, per the project's rule.
+// sharp itself is real (it's a local image library, not an AWS call).
+
+function mockSend(client, handlers) {
+  const original = client.send;
+  client.send = async (cmd) => {
+    const fn = handlers[cmd.constructor.name];
+    if (!fn) throw new Error(`Unexpected command: ${cmd.constructor.name}`);
+    return fn(cmd);
+  };
+  return () => {
+    client.send = original;
+  };
+}
+
+test("S3Handler: successful validation invokes ModerationHandler with the bucket/key it just validated", async () => {
+  const sharp = require("sharp");
+  const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
+
+  const key = "uploads/test-user/success-abc.png";
+  const validImage = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 10, g: 20, b: 30 } },
+  })
+    .png()
+    .toBuffer();
+
+  const invokeCalls = [];
+  const restoreS3 = mockSend(s3, {
+    GetObjectCommand: async () => ({
+      Body: { transformToByteArray: async () => validImage },
+      ContentType: "image/png",
+      Metadata: {},
+    }),
+    PutObjectCommand: async () => ({}),
+    DeleteObjectCommand: async () => ({}),
+  });
+  const restoreDoc = mockSend(docClient, {
+    GetCommand: async () => ({ Item: { PK: "PENDING#success-abc", SK: "PENDING#success-abc", status: "pending" } }),
+    UpdateCommand: async () => ({}),
+  });
+  const restoreLambda = mockSend(lambdaClient, {
+    InvokeCommand: async (cmd) => {
+      invokeCalls.push(cmd.input);
+      return {};
+    },
+  });
+
+  try {
+    await handler({ Records: [{ s3: { object: { key, size: validImage.length } } }] }, {}, () => {});
+  } finally {
+    restoreS3();
+    restoreDoc();
+    restoreLambda();
+  }
+
+  assert.strictEqual(invokeCalls.length, 1, "ModerationHandler is invoked exactly once after successful validation");
+  assert.strictEqual(invokeCalls[0].InvocationType, "Event", "fire-and-forget, does not await a response payload");
+  assert.strictEqual(invokeCalls[0].FunctionName, process.env.MODERATION_HANDLER_FUNCTION_NAME);
+  const payload = JSON.parse(Buffer.from(invokeCalls[0].Payload).toString());
+  assert.strictEqual(payload.key, key, "handoff payload carries the key S3Handler just validated");
+  assert.ok(payload.bucket, "handoff payload carries the bucket");
+});
+
+test("S3Handler: rejected upload (fails validation) never invokes ModerationHandler", async () => {
+  const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
+
+  // Minimal valid 1×1 PNG — passes the magic-bytes check but fails the
+  // MIN_DIMENSION=600 check, so it's rejected before any re-encode/markActive.
+  const PNG_1X1 = Buffer.from(
+    "89504e470d0a1a0a0000000d494844520000000100000001080600000" +
+      "01f15c4890000000a4944415478016360000000020001e221bc33000000004945" +
+      "4e44ae426082",
+    "hex"
+  );
+  const key = "uploads/test-user/reject-def.png";
+
+  const invokeCalls = [];
+  const restoreS3 = mockSend(s3, {
+    GetObjectCommand: async () => ({
+      Body: { transformToByteArray: async () => PNG_1X1 },
+      ContentType: "image/png",
+      Metadata: {},
+    }),
+    DeleteObjectCommand: async () => ({}),
+  });
+  const restoreDoc = mockSend(docClient, {
+    GetCommand: async () => ({ Item: { PK: "PENDING#reject-def", SK: "PENDING#reject-def", status: "pending" } }),
+    UpdateCommand: async () => ({}),
+  });
+  const restoreLambda = mockSend(lambdaClient, {
+    InvokeCommand: async (cmd) => {
+      invokeCalls.push(cmd.input);
+      return {};
+    },
+  });
+
+  try {
+    await handler({ Records: [{ s3: { object: { key, size: PNG_1X1.length } } }] }, {}, () => {});
+  } finally {
+    restoreS3();
+    restoreDoc();
+    restoreLambda();
+  }
+
+  assert.strictEqual(invokeCalls.length, 0, "a rejected file never triggers moderation");
 });

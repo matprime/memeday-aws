@@ -6,14 +6,17 @@ import {
 } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import type { S3Handler } from "aws-lambda";
 import sharp from "sharp";
 import type { FormatEnum } from "sharp";
 
 const s3 = new S3Client({});
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const lambdaClient = new LambdaClient({});
 const BUCKET = process.env.S3_BUCKET_NAME!;
 const TABLE = process.env.DYNAMODB_TABLE_NAME!;
+const MODERATION_HANDLER_FUNCTION_NAME = process.env.MODERATION_HANDLER_FUNCTION_NAME!;
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const MIN_DIMENSION = 600;
@@ -175,10 +178,27 @@ export const handler: S3Handler = async (event) => {
 
       await markActive(pendingId);
       console.log(`Validated upload: key=${key} size=${size} format=${metadata.format} dims=${width}x${height}`);
+
+      // Fire-and-forget: ModerationHandler is invoked directly (no S3 subscription
+      // of its own) now that this is the only Lambda subscribed to the bucket
+      // event. A failed invoke here (throttled, unavailable) must not roll back
+      // the validation that already succeeded — the image is already marked
+      // active. ModerationHandlerErrorsAlarm is the backstop for catching this.
+      try {
+        await lambdaClient.send(
+          new InvokeCommand({
+            FunctionName: MODERATION_HANDLER_FUNCTION_NAME,
+            InvocationType: "Event",
+            Payload: Buffer.from(JSON.stringify({ bucket: BUCKET, key })),
+          })
+        );
+      } catch (err) {
+        console.error(`Failed to invoke ModerationHandler for key=${key}:`, err);
+      }
     } catch (err) {
       console.error(`Failed to process ${key}:`, err);
     }
   }
 };
 
-export { EXT_TO_FORMAT, UNSCREENABLE_FORMATS };
+export { EXT_TO_FORMAT, UNSCREENABLE_FORMATS, s3, docClient, lambdaClient };

@@ -219,10 +219,11 @@ export class MemeDayStack extends cdk.Stack {
     this.addErrorsAlarm(s3Handler, "S3Handler", alertAction);
 
     // --- Rekognition content moderation handler (KAN-44) ---
-    // Fires on the same uploads/ prefix as S3Handler. It only acts on the
-    // validated (post-re-encode) object write — see the handler's own guard —
-    // so it always runs after S3Handler's format/size validation, on the
-    // final asset.
+    // No S3 event subscription of its own: S3 rejects two overlapping
+    // OBJECT_CREATED/prefix subscriptions as ambiguous. Instead S3Handler
+    // invokes this Lambda directly (async) once it finishes validating and
+    // re-encoding an upload, so it always runs after S3Handler's format/size
+    // validation, on the final asset.
     const moderationHandler = new NodejsFunction(this, "ModerationHandler", {
       entry: path.join(__dirname, "../../lambdas/moderation-handler/index.ts"),
       projectRoot: path.join(__dirname, "../.."),
@@ -256,13 +257,17 @@ export class MemeDayStack extends cdk.Stack {
     // runtime users — table.grantReadWriteData grants only this function's role.
     table.grantReadWriteData(moderationHandler);
 
-    bucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new LambdaDestination(moderationHandler),
-      { prefix: "uploads/" }
-    );
-
     this.addErrorsAlarm(moderationHandler, "ModerationHandler", alertAction);
+
+    // S3Handler invokes ModerationHandler directly after validation succeeds
+    // (see lambdas/s3-handler) — scoped to this one function, not "*".
+    s3Handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["lambda:InvokeFunction"],
+        resources: [moderationHandler.functionArn],
+      })
+    );
+    s3Handler.addEnvironment("MODERATION_HANDLER_FUNCTION_NAME", moderationHandler.functionName);
 
     // --- CloudFront: only public path to the media bucket (OAC, no public bucket policy) ---
     const distribution = new cloudfront.Distribution(this, "MemeDayDistribution", {

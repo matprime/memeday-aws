@@ -142,6 +142,66 @@ test("logModerationResult: clean result logs action=published", async () => {
   assert.strictEqual(parsed.labels.length, 1);
 });
 
+// --- handler(): new {bucket, key} invoke payload, no HeadObjectCommand/validated
+// guard (removed — S3Handler now invokes this Lambda directly, exactly once,
+// only after its own validation succeeds). Rekognition is mocked by swapping
+// .send on the exported client instance; no live Rekognition calls.
+
+test("handler: processes a {bucket, key} payload directly, publishes on a clean result (no S3 call needed)", async () => {
+  const { handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
+
+  const originalSend = rekognition.send;
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (msg) => lines.push(msg);
+  rekognition.send = async () => ({ ModerationLabels: [{ Name: "Suggestive", Confidence: 91 }] });
+
+  try {
+    await handler({ bucket: "test-bucket", key: "uploads/user1/clean-xyz.png" });
+  } finally {
+    rekognition.send = originalSend;
+    console.log = originalLog;
+  }
+
+  assert.strictEqual(lines.length, 1);
+  const parsed = JSON.parse(lines[0]);
+  assert.strictEqual(parsed.action, "published");
+  assert.strictEqual(parsed.pendingId, "clean-xyz");
+});
+
+test("handler: blocked result from a {bucket, key} payload rejects the PENDING# record", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
+  const { createPendingUpload, getPendingUpload } = await import("../lib/db.ts");
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+
+  const id = randomUUID();
+  const creatorId = `test-mod-handler-${Date.now()}`;
+  const key = `uploads/${creatorId}/${id}.png`;
+
+  await createPendingUpload({
+    id,
+    creatorId,
+    s3Key: key,
+    caption: "moderation handler payload test",
+  });
+
+  const originalSend = rekognition.send;
+  rekognition.send = async () => ({ ModerationLabels: [{ Name: "Explicit Nudity", Confidence: 95 }] });
+
+  try {
+    await handler({ bucket: "test-bucket", key });
+
+    const pending = await getPendingUpload(id);
+    assert.strictEqual(pending.status, "rejected");
+  } finally {
+    rekognition.send = originalSend;
+    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` } }));
+  }
+});
+
 // --- applyBlockDecision: live DynamoDB (dev table), Rekognition never called ---
 // (follows the same live-dev-table pattern as test/pending-upload.test.js and
 // test/stream-handler.test.js — only the Rekognition network call is mocked,
