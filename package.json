@@ -12,6 +12,8 @@
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1067.0",
     "@aws-sdk/client-dynamodb": "^3",
+    "@aws-sdk/client-lambda": "^3.1111.0",
+    "@aws-sdk/client-rekognition": "^3.1110.0",
     "@aws-sdk/client-s3": "^3",
     "@aws-sdk/lib-dynamodb": "^3",
     "@aws-sdk/s3-request-presigner": "^3",

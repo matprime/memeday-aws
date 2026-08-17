@@ -44,9 +44,9 @@ export function PostMemeModal({ onClose }: Props) {
 
   const handleFile = (file: File | null) => {
     if (!file) return;
-    const validTypes = ["image/png", "image/jpeg", "image/gif"];
+    const validTypes = ["image/png", "image/jpeg"];
     if (!validTypes.includes(file.type)) {
-      addToast("Please upload a PNG, JPG, or GIF image.", "error");
+      addToast("Please upload a PNG or JPG image.", "error");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -234,7 +234,7 @@ export function PostMemeModal({ onClose }: Props) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/gif"
+            accept="image/png,image/jpeg"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -263,7 +263,7 @@ export function PostMemeModal({ onClose }: Props) {
                 <p className="text-sm text-gray-400">
                   Drop your meme here or <span className="text-accent-light">browse</span>
                 </p>
-                <p className="text-xs text-gray-600 mt-1">PNG, JPG, GIF up to 10MB</p>
+                <p className="text-xs text-gray-600 mt-1">PNG, JPG up to 10MB</p>
               </>
             )}
           </button>

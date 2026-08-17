@@ -218,6 +218,57 @@ export class MemeDayStack extends cdk.Stack {
 
     this.addErrorsAlarm(s3Handler, "S3Handler", alertAction);
 
+    // --- Rekognition content moderation handler (KAN-44) ---
+    // No S3 event subscription of its own: S3 rejects two overlapping
+    // OBJECT_CREATED/prefix subscriptions as ambiguous. Instead S3Handler
+    // invokes this Lambda directly (async) once it finishes validating and
+    // re-encoding an upload, so it always runs after S3Handler's format/size
+    // validation, on the final asset.
+    const moderationHandler = new NodejsFunction(this, "ModerationHandler", {
+      entry: path.join(__dirname, "../../lambdas/moderation-handler/index.ts"),
+      projectRoot: path.join(__dirname, "../.."),
+      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        DYNAMODB_TABLE_NAME: table.tableName,
+      },
+    });
+
+    // Rekognition's image APIs don't support resource-level ARNs for
+    // DetectModerationLabels — actions: ["*"] is the API's own constraint,
+    // not a scoping choice. s3:GetObject is what lets Rekognition read the
+    // S3Object on this function's behalf, scoped to uploads/* like S3Handler.
+    moderationHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["rekognition:DetectModerationLabels"],
+        resources: ["*"],
+      })
+    );
+    moderationHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:GetObject"],
+        resources: [`${bucket.bucketArn}/uploads/*`],
+      })
+    );
+
+    // Own execution role, separate from S3Handler's and from the KAN-17
+    // runtime users — table.grantReadWriteData grants only this function's role.
+    table.grantReadWriteData(moderationHandler);
+
+    this.addErrorsAlarm(moderationHandler, "ModerationHandler", alertAction);
+
+    // S3Handler invokes ModerationHandler directly after validation succeeds
+    // (see lambdas/s3-handler) — scoped to this one function, not "*".
+    s3Handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["lambda:InvokeFunction"],
+        resources: [moderationHandler.functionArn],
+      })
+    );
+    s3Handler.addEnvironment("MODERATION_HANDLER_FUNCTION_NAME", moderationHandler.functionName);
+
     // --- CloudFront: only public path to the media bucket (OAC, no public bucket policy) ---
     const distribution = new cloudfront.Distribution(this, "MemeDayDistribution", {
       defaultBehavior: {
@@ -285,6 +336,7 @@ export class MemeDayStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "S3HandlerArn", { value: s3Handler.functionArn });
+    new cdk.CfnOutput(this, "ModerationHandlerArn", { value: moderationHandler.functionArn });
     new cdk.CfnOutput(this, "Region", { value: this.region });
     new cdk.CfnOutput(this, "CloudFrontDomain", {
       value: distribution.distributionDomainName,
