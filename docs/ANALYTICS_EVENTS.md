@@ -55,8 +55,8 @@ developer clicks land in the funnels you are trying to read.
 | `tip_link_opened` | User taps Send Tip with **no** connected wallet, so the `solana:` deep link is opened instead. | `memeId`, `amountSol` | `components/TipModal.tsx` |
 | `mint_started` | NFT mint begins (Phantom signature prompt about to appear). | — | `components/PostMemeModal.tsx` |
 | `mint_confirmed` | `createNft(...).sendAndConfirm` returned at `confirmed` commitment. | `mintAddress` | `components/PostMemeModal.tsx` |
-| `share_clicked` | **Reserved, not emitted yet.** User clicks share on a meme. | `memeId`, `channel` | share-tracking task |
-| `visit_from_share` | **Reserved, not emitted yet.** Landing hit carrying a share referrer param. | `memeId`, `channel` | share-tracking task |
+| `share_clicked` | User taps a share option (native, per-platform, or copy link). | `memeId`, `channel`, `surface`: `"feed" \| "detail"` | `components/ShareBar.tsx` |
+| `visit_from_share` | `/meme/[id]` loads with `?ref=share&ch=<channel>&m=<memeId>` in the URL. Once per session per meme+channel (`sessionStorage`), even on refresh. | `memeId`, `channel` | `components/MemePageClient.tsx` |
 
 Mint events deliberately carry **no** `memeId`: the meme row is created after the mint
 completes, so at mint time no id exists. Join them to the upload by person/session.
@@ -77,6 +77,16 @@ Both are funnels, ordered, default 1-day conversion window.
 1. `$pageview` where `$pathname` contains `/meme/`
 2. Any of `tip_qr_shown`, `mint_started`
 3. `mint_confirmed`
+
+**Share funnel** — shares out vs. visits in, per platform and per meme
+1. `share_clicked`
+2. `visit_from_share`
+
+Not ordered (no conversion window: the visit can land on a different device/session
+than the click, so PostHog's per-user funnel matching doesn't apply here). Build as a
+funnel breakdown by `channel`, filtered by `memeId` for a single meme's numbers, or
+left unfiltered for the platform-level rollup. This is the number for the weekly review
+and any pitch deck.
 
 Breakdown suggestions: `signup_completed` by `method`; `vote_cast` by `surface`;
 everything by `network` once prod runs mainnet.

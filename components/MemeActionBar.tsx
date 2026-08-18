@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift, Share2 } from "lucide-react";
+import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift } from "lucide-react";
 import { DbMeme, Creator } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { InvestModal } from "./InvestModal";
 import { TipModal } from "./TipModal";
+import { ShareBar } from "./ShareBar";
 import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
@@ -27,12 +28,6 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
   }, [hydrateVotedMemes, userId]);
 
   const hasVoted = votedMemes.has(meme.id);
-
-  const handleShare = () => {
-    const url = `${window.location.origin}/meme/${meme.id}`;
-    const shareUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(meme.caption)}&url=${encodeURIComponent(url)}`;
-    window.open(shareUrl, "_blank", "noopener,noreferrer");
-  };
 
   const handleVote = async () => {
     if (!cognitoToken) {
@@ -102,13 +97,13 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
 
         {/* Row 1: Share + Tip Creator + Buy Meme — equal width */}
         <div className="grid grid-cols-3 gap-3">
-          <button
-            onClick={handleShare}
-            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-bg/60 text-gray-300 hover:text-white hover:bg-white/10 border border-border transition-colors"
-          >
-            <Share2 size={16} />
-            Share
-          </button>
+          <ShareBar
+            memeId={meme.id}
+            caption={meme.caption}
+            creatorHandle={creator.username}
+            surface="detail"
+            triggerClassName="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-bg/60 text-gray-300 hover:text-white hover:bg-white/10 border border-border transition-colors"
+          />
 
           <button
             onClick={() =>

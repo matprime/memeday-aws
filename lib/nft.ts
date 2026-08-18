@@ -6,8 +6,10 @@ import {
   createNft,
   mplTokenMetadata,
 } from "@metaplex-foundation/mpl-token-metadata";
-import { generateSigner, percentAmount } from "@metaplex-foundation/umi";
+import { base58, generateSigner, percentAmount } from "@metaplex-foundation/umi";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
+import type { Connection } from "@solana/web3.js";
+import { pollSignatureConfirmation } from "@/lib/solana/confirm";
 
 const MAX_ON_CHAIN_URI_LEN = 200;
 
@@ -66,6 +68,23 @@ export async function mintMemeNft(
   const umi = createUmi(rpcUrl)
     .use(mplTokenMetadata())
     .use(walletAdapterIdentity(wallet as any));
+
+  // umi's confirmTransaction delegates to web3.js Connection.confirmTransaction,
+  // which waits on a signatureSubscribe WebSocket. rpcUrl now points at our
+  // /api/rpc proxy (a serverless route that cannot hold a socket open), so that
+  // subscription never fires and a landed mint would still time out. Swap in the
+  // HTTP polling used by the tip path — see lib/solana/confirm.ts.
+  // Exposed as a getter by umi-rpc-web3js but absent from the RpcInterface type.
+  const web3Connection = (umi.rpc as unknown as { connection: Connection })
+    .connection;
+  umi.rpc.confirmTransaction = async (signature, options) => {
+    const sig = base58.deserialize(signature)[0];
+    await pollSignatureConfirmation(web3Connection, sig, options.commitment);
+    return {
+      context: { slot: await web3Connection.getSlot() },
+      value: { err: null },
+    };
+  };
 
   const mint = generateSigner(umi);
   try {
