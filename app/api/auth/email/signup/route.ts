@@ -5,6 +5,7 @@ import {
   ListUsersCommand,
   SignUpCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 function cognitoClient() {
   return new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
 
   if (!email || !password) {
     return NextResponse.json({ error: "email and password required" }, { status: 400 });
+  }
+
+  if (await isRateLimited("signupPerIp", getClientIp(req))) {
+    return rateLimitResponse();
   }
 
   const client = cognitoClient();

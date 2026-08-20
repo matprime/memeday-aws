@@ -7,6 +7,7 @@ import {
   AdminInitiateAuthCommand,
   AdminGetUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 const DER_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const NONCE_TTL_MS = 5 * 60 * 1000;
@@ -135,6 +136,10 @@ export async function POST(req: NextRequest) {
 
   if (!walletAddress || !challenge || !signature) {
     return NextResponse.json({ error: "walletAddress, challenge, and signature required" }, { status: 400 });
+  }
+
+  if (await isRateLimited("walletVerifyPerIp", getClientIp(req))) {
+    return rateLimitResponse();
   }
 
   if (!verifyChallenge(challenge, walletAddress)) {

@@ -3,14 +3,32 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 const { registerHooks } = require("node:module");
+const { pathToFileURL, fileURLToPath } = require("node:url");
 const { hasAwsCredentials } = require("./helpers/aws-credentials");
 
 // The route imports "next/server", which only resolves as "next/server.js"
 // under Node's ESM resolution (same trick as the voting test's next/cache stub).
+// It also imports lib/rate-limit.ts via the "@/" tsconfig path alias, and
+// rate-limit.ts in turn does extensionless relative imports (e.g. "./dynamo")
+// — neither resolves under plain Node ESM, so both get resolved to the repo
+// file directly (same idea as the extensionless-relative-import trick in
+// voting-enforcement.test.js).
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "next/server") {
       return nextResolve("next/server.js", context);
+    }
+    if (specifier.startsWith("@/")) {
+      const candidate = path.join(__dirname, "..", specifier.slice(2) + ".ts");
+      if (fs.existsSync(candidate)) {
+        return { url: pathToFileURL(candidate).href, shortCircuit: true };
+      }
+    }
+    if (specifier.startsWith(".") && !path.extname(specifier) && context.parentURL?.startsWith("file:")) {
+      const candidate = path.resolve(path.dirname(fileURLToPath(context.parentURL)), specifier + ".ts");
+      if (fs.existsSync(candidate)) {
+        return { url: pathToFileURL(candidate).href, shortCircuit: true };
+      }
     }
     return nextResolve(specifier, context);
   },
