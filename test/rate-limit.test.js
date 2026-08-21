@@ -54,6 +54,31 @@ test("getClientIp: falls back to \"unknown\" when the header is missing", async 
   assert.strictEqual(getClientIp(new Request("http://x")), "unknown");
 });
 
+test("getClientIp: a multi-entry header logs a warning but does not change the result", async () => {
+  const { getClientIp } = await load("lib/rate-limit.ts");
+  const warnings = [];
+  const originalConsoleWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const req = new Request("http://x", {
+      headers: { "x-forwarded-for": "9.9.9.9, 8.8.8.8, 7.7.7.7" },
+    });
+    assert.strictEqual(getClientIp(req), "9.9.9.9", "still takes the first entry");
+
+    // The warning is throttled to once per process, and an earlier test in
+    // this file may already have consumed it, so assert on content only if it
+    // fired here.
+    const logged = warnings.flat().map((v) => JSON.stringify(v)).join(" ");
+    if (logged) {
+      assert.doesNotMatch(logged, /9\.9\.9\.9|8\.8\.8\.8/, "IPs are personal data, log the count only");
+      assert.ok(logged.includes("3"), "entry count should be logged");
+    }
+  } finally {
+    console.warn = originalConsoleWarn;
+  }
+});
+
 // ── rateLimitResponse: identical body everywhere ────────────────────────────
 
 test("rateLimitResponse: identical generic body regardless of caller", async () => {
@@ -79,7 +104,7 @@ test("rate limiting behavior", async (t) => {
     return;
   }
 
-  const { isRateLimited } = await load("lib/rate-limit.ts");
+  const { isRateLimited, cloudwatch } = await load("lib/rate-limit.ts");
   const { RATE_LIMITS } = await load("lib/rate-limit-config.ts");
   const { dynamo, TABLE } = await load("lib/dynamo.ts");
   const { UpdateCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
@@ -149,12 +174,16 @@ test("rate limiting behavior", async (t) => {
 
   await t.test("a thrown DynamoDB error results in the request being allowed (fail-open)", async () => {
     const originalSend = dynamo.send.bind(dynamo);
+    // Stubbed so the fail-open path doesn't publish real datapoints into the
+    // dev namespace every time this test runs.
+    const originalCwSend = cloudwatch.send.bind(cloudwatch);
     const loggedArgs = [];
     const originalConsoleError = console.error;
     console.error = (...args) => loggedArgs.push(args);
     dynamo.send = async () => {
       throw new Error("simulated DynamoDB outage");
     };
+    cloudwatch.send = async () => {};
 
     const identity = "test-rl-failopen-raw-identity-marker";
     try {
@@ -167,6 +196,32 @@ test("rate limiting behavior", async (t) => {
       assert.match(logged, /"identity":"[0-9a-f]{12}"/, "logged identity should be a 12-hex-char salted hash");
     } finally {
       dynamo.send = originalSend;
+      cloudwatch.send = originalCwSend;
+      console.error = originalConsoleError;
+    }
+  });
+
+  await t.test("a failed metric publish does not change fail-open behavior", async () => {
+    const originalDynamoSend = dynamo.send.bind(dynamo);
+    const originalCwSend = cloudwatch.send.bind(cloudwatch);
+    const originalConsoleError = console.error;
+    console.error = () => {};
+
+    dynamo.send = async () => {
+      throw new Error("simulated DynamoDB outage");
+    };
+    // The observability path is allowed to be broken too. If a broken metric
+    // could turn a fail-open into a 429, fail-open would be a lie.
+    cloudwatch.send = async () => {
+      throw new Error("simulated CloudWatch outage");
+    };
+
+    try {
+      const blocked = await isRateLimited("loginPerIp", `test-rl-metric-fail-${Date.now()}`);
+      assert.strictEqual(blocked, false, "a failed metric publish must not produce a 429");
+    } finally {
+      dynamo.send = originalDynamoSend;
+      cloudwatch.send = originalCwSend;
       console.error = originalConsoleError;
     }
   });
