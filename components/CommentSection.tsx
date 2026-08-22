@@ -38,7 +38,7 @@ export function CommentSection({ memeId, initialComments, onCommentAdded }: Prop
     });
 
     if (!res.ok) {
-      addToast("Failed to post comment.", "error");
+      addToast(res.status === 429 ? "Slow down — too many comments" : "Failed to post comment.", "error");
       return;
     }
 

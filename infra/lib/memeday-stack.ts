@@ -42,9 +42,10 @@ export class MemeDayStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       removalPolicy,
-      // Sweeps stale/rejected PENDING# upload records after 24h. Only PENDING#
-      // items are written with expiresAt, so memes, users, and comments are
-      // never affected by TTL.
+      // Sweeps stale/rejected PENDING# upload records after 24h, and RATE#
+      // counter items shortly after their window closes (see lib/rate-limit.ts).
+      // Only those two prefixes are written with expiresAt, so memes, users,
+      // and comments are never affected by TTL.
       timeToLiveAttribute: "expiresAt",
     });
 
@@ -157,6 +158,27 @@ export class MemeDayStack extends cdk.Stack {
       evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription: "MemeDay table throttled requests",
+    }).addAlarmAction(alertAction);
+
+    // lib/rate-limit.ts is fail-open: a failed counter write logs and lets the
+    // request through, so nobody is rate limited until it recovers. Nothing
+    // surfaces that on its own. The threshold is deliberately not zero, since
+    // isolated DynamoDB faults are expected and self-healing.
+    new cloudwatch.Alarm(this, "RateLimitCounterFailureAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "MemeDay",
+        metricName: "RateLimitCounterFailure",
+        // Must match the Stage dimension emitted by lib/rate-limit.ts, or dev
+        // and prod would read each other's data.
+        dimensionsMap: { Stage: props.stage },
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 20,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "MemeDay rate limit counter write failures",
     }).addAlarmAction(alertAction);
 
     new cdk.CfnOutput(this, "AlertTopicArn", { value: alertTopic.topicArn });
@@ -329,6 +351,18 @@ export class MemeDayStack extends cdk.Stack {
           new iam.PolicyStatement({
             actions: ["s3:PutObject"],
             resources: [`${bucket.bucketArn}/uploads/*`],
+          }),
+          // CloudWatch — PutMetricData for the RateLimitCounterFailure metric
+          // emitted by lib/rate-limit.ts. PutMetricData doesn't support
+          // resource-level ARNs, so resources: ["*"] is the API's own
+          // constraint, not a scoping choice. The namespace condition is what
+          // actually scopes it: this user can only write into MemeDay.
+          new iam.PolicyStatement({
+            actions: ["cloudwatch:PutMetricData"],
+            resources: ["*"],
+            conditions: {
+              StringEquals: { "cloudwatch:namespace": "MemeDay" },
+            },
           }),
         ],
       })

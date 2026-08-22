@@ -76,7 +76,9 @@ export function PostMemeModal({ onClose }: Props) {
       `/api/upload-url?ext=${ext}&caption=${encodeURIComponent(caption)}`,
       { headers: { Authorization: `Bearer ${cognitoToken}` } }
     );
-    if (!urlRes.ok) throw new Error("Failed to get upload URL");
+    if (!urlRes.ok) {
+      throw new Error(urlRes.status === 429 ? "Slow down — too many uploads" : "Failed to get upload URL");
+    }
     const { presignedUrl, pendingId, imageUrl } = await urlRes.json();
     const putRes = await fetch(presignedUrl, {
       method: "PUT",

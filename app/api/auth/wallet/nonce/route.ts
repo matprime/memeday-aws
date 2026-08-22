@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 const secret = () => {
   const s = process.env.WALLET_AUTH_SECRET;
@@ -11,6 +12,10 @@ export async function POST(req: NextRequest) {
   const { walletAddress } = await req.json();
   if (!walletAddress || typeof walletAddress !== "string") {
     return NextResponse.json({ error: "walletAddress required" }, { status: 400 });
+  }
+
+  if (await isRateLimited("walletNoncePerIp", getClientIp(req))) {
+    return rateLimitResponse();
   }
 
   const ts = Date.now();

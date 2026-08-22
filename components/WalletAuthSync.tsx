@@ -58,7 +58,9 @@ export function WalletAuthSync() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ walletAddress }),
         });
-        if (!nonceRes.ok) throw new Error("Failed to get auth challenge");
+        if (!nonceRes.ok) {
+          throw new Error(nonceRes.status === 429 ? "Slow down and try again" : "Failed to get auth challenge");
+        }
         const { challenge } = await nonceRes.json();
 
         // 2. Sign the challenge with Phantom (prompts user once on connect)
@@ -72,7 +74,9 @@ export function WalletAuthSync() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ walletAddress, challenge, signature }),
         });
-        if (!verifyRes.ok) throw new Error("Auth verification failed");
+        if (!verifyRes.ok) {
+          throw new Error(verifyRes.status === 429 ? "Slow down and try again" : "Auth verification failed");
+        }
         const { accessToken, isNewUser } = await verifyRes.json();
 
         // Don't overwrite an email session that completed while wallet auth was in flight
