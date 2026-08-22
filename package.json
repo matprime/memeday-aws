@@ -10,6 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1115.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.1067.0",
     "@aws-sdk/client-dynamodb": "^3",
     "@aws-sdk/client-lambda": "^3.1111.0",
@@ -27,6 +28,7 @@
     "@solana/wallet-adapter-react-ui": "^0.9.35",
     "@solana/web3.js": "^1.95.3",
     "@vercel/analytics": "^2.0.1",
+    "@vercel/functions": "^3.9.5",
     "aws-jwt-verify": "^4",
     "bs58": "^6.0.0",
     "clsx": "^2.1.1",

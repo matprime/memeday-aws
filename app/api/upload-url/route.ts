@@ -4,6 +4,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getUserIdFromRequest } from "@/lib/cognito";
 import { createPendingUpload } from "@/lib/db";
+import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? "us-east-1" });
 
@@ -34,6 +35,19 @@ export async function GET(request: NextRequest) {
   const rawExt = request.nextUrl.searchParams.get("ext") ?? "jpg";
   const ext = rawExt.toLowerCase().replace(/[^a-z]/g, "");
   const contentType = ALLOWED_EXTS[ext] ?? "image/jpeg";
+
+  // Two-layer check: the per-user limit is the real limit, the per-IP one is
+  // just a Sybil ceiling (see lib/rate-limit-config.ts). Both counters get
+  // incremented on every request — Promise.all runs them concurrently rather
+  // than short-circuiting, so a user who's already over their own limit still
+  // accrues against the IP ceiling.
+  const [userLimited, ipLimited] = await Promise.all([
+    isRateLimited("uploadPerUser", userId),
+    isRateLimited("uploadPerIp", getClientIp(request)),
+  ]);
+  if (userLimited || ipLimited) {
+    return rateLimitResponse();
+  }
 
   // uploads/ prefix matches the S3Handler validation Lambda's event filter and
   // its IAM scoping (least-privilege: activity limited to that folder only).

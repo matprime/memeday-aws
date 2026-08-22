@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SOLANA_RPC_URL } from "@/lib/solana/network";
 import { isAllowedRpcBody } from "@/lib/solana/rpc-allowlist";
+import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 // Server-side JSON-RPC forwarder. SOLANA_RPC_URL carries the provider API key,
 // so it must never reach the browser — the client talks to this route and this
@@ -18,6 +19,12 @@ export async function POST(request: NextRequest) {
 
   if (!isAllowedRpcBody(body)) {
     return NextResponse.json({ error: "rpc method not allowed" }, { status: 403 });
+  }
+
+  // Checked after the allowlist on purpose: a disallowed method should still
+  // get its 403 without spending the caller's rate budget.
+  if (await isRateLimited("rpcPerIp", getClientIp(request))) {
+    return rateLimitResponse();
   }
 
   try {

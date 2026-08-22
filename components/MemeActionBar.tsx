@@ -45,7 +45,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
       headers: { Authorization: `Bearer ${cognitoToken}` },
     });
     if (!res.ok) {
-      addToast("Vote failed", "error");
+      addToast(res.status === 429 ? "Slow down — too many votes" : "Vote failed", "error");
       setVotes((v) => v - 1);
       return;
     }
