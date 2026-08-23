@@ -93,7 +93,7 @@ export async function mintMemeNft(
       name: caption.slice(0, 32),
       symbol: "MDAY",
       uri: metadataUri,
-      sellerFeeBasisPoints: percentAmount(5),
+      sellerFeeBasisPoints: percentAmount(2.5),
       isMutable: false,
     }).sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
   } catch (err) {
