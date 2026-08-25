@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift } from "lucide-react";
+import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift, Flag } from "lucide-react";
 import { DbMeme, Creator } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { InvestModal } from "./InvestModal";
@@ -16,7 +16,8 @@ interface Props {
 }
 
 export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
-  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
+  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, reportOnMeme, addToast } =
+    useAppStore();
   const [investOpen, setInvestOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
   const [votes, setVotes] = useState(meme.likeCount);
@@ -59,6 +60,25 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
     }
   };
 
+  const handleReport = async () => {
+    const reason = window.prompt("Why are you reporting this meme?")?.trim();
+    if (!reason) return;
+    const res = await fetch(`/api/memes/${meme.id}/report`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(cognitoToken ? { Authorization: `Bearer ${cognitoToken}` } : {}),
+      },
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) {
+      addToast(res.status === 429 ? "Slow down — too many reports" : "Report failed", "error");
+      return;
+    }
+    reportOnMeme(userId, meme.id);
+    addToast("Reported. You won't see this in your feed anymore.", "success");
+  };
+
   return (
     <>
       <div className="flex flex-col gap-3 bg-surface border border-border rounded-2xl p-4">
@@ -93,6 +113,15 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
               Buy NFT · {meme.listingPrice} SOL
             </button>
           )}
+
+          <button
+            onClick={handleReport}
+            title="Report"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold bg-bg/60 text-gray-500 hover:text-white hover:bg-white/10 border border-border transition-colors"
+          >
+            <Flag size={16} />
+            Report
+          </button>
         </div>
 
         {/* Row 1: Share + Tip Creator + Buy Meme — equal width */}

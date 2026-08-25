@@ -48,6 +48,14 @@ interface AppState {
   hydrateVotedMemes: (userId: string | null) => void;
   voteOnMeme: (userId: string | null, memeId: string) => void;
 
+  // Reported memes, hidden from this reporter's own feed only (KAN-43).
+  // Anonymous: localStorage only, no server state (decision 16).
+  // Authenticated: hydrateReportedMemes merges in the server-derived list
+  // (GET /api/memes/reported) so it survives a fresh browser/session too.
+  reportedMemes: Set<string>;
+  hydrateReportedMemes: (userId: string | null, memeIds: string[]) => Promise<void>;
+  reportOnMeme: (userId: string | null, memeId: string) => void;
+
   // Creator project state (per session)
   myBagsProjectId: string | null;
   myTokenSymbol: string | null;
@@ -110,6 +118,57 @@ export const useAppStore = create<AppState>()(
         }
       }
       return { votedMemes: next };
+    }),
+
+  reportedMemes: new Set(),
+  hydrateReportedMemes: async (userId, memeIds) => {
+    const anonRaw = (() => {
+      try {
+        return localStorage.getItem("reportedMemes:anon");
+      } catch {
+        return null;
+      }
+    })();
+    const anonIds = anonRaw ? (JSON.parse(anonRaw) as unknown) : [];
+    const base = Array.isArray(anonIds) ? anonIds.filter((x) => typeof x === "string") : [];
+
+    const sub = userId ? decodeJwtSub(userId) : null;
+    if (!sub || memeIds.length === 0) {
+      set({ reportedMemes: new Set(base) });
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/memes/reported?ids=${memeIds.join(",")}`, {
+        headers: { Authorization: `Bearer ${userId}` },
+      });
+      const data = await res.json();
+      const serverIds = Array.isArray(data.reportedMemeIds) ? data.reportedMemeIds : [];
+      set({ reportedMemes: new Set([...base, ...serverIds]) });
+    } catch {
+      set({ reportedMemes: new Set(base) });
+    }
+  },
+  reportOnMeme: (userId, memeId) =>
+    set((s) => {
+      const next = new Set(s.reportedMemes);
+      next.add(memeId);
+      // Anonymous callers have no server-side record to fall back on, so the
+      // client is the only place this can persist (decision 16). Authenticated
+      // callers already get this back from GET /api/memes/reported on the next
+      // load, but caching it locally too avoids a flash of the meme reappearing
+      // before that request resolves.
+      if (!userId) {
+        try {
+          const raw = localStorage.getItem("reportedMemes:anon");
+          const existing = raw ? (JSON.parse(raw) as unknown) : [];
+          const ids = Array.isArray(existing) ? existing.filter((x) => typeof x === "string") : [];
+          localStorage.setItem("reportedMemes:anon", JSON.stringify([...new Set([...ids, memeId])]));
+        } catch {
+          // ignore storage errors (private mode / quota)
+        }
+      }
+      return { reportedMemes: next };
     }),
 
   myBagsProjectId: null,

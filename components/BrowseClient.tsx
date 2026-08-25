@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DbMeme, Tab } from "@/lib/types";
+import { useAppStore } from "@/lib/store";
 import { MemeCard } from "./MemeCard";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -16,18 +17,28 @@ interface Props {
 
 export function BrowseClient({ memes }: Props) {
   const [tab, setTab] = useState<Tab>("today");
+  const { cognitoToken, reportedMemes, hydrateReportedMemes } = useAppStore();
 
-  const filtered = memes.filter((m) => {
-    const posted = new Date(m.createdAt);
-    if (tab === "today") {
-      const today = new Date();
-      return posted.toDateString() === today.toDateString();
-    }
-    if (tab === "week") {
-      return posted >= new Date(Date.now() - 7 * 86400000);
-    }
-    return true;
-  });
+  useEffect(() => {
+    hydrateReportedMemes(cognitoToken, memes.map((m) => m.id));
+    // Only re-hydrate when the set of visible memes or the session changes,
+    // not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cognitoToken, memes]);
+
+  const filtered = memes
+    .filter((m) => !reportedMemes.has(m.id))
+    .filter((m) => {
+      const posted = new Date(m.createdAt);
+      if (tab === "today") {
+        const today = new Date();
+        return posted.toDateString() === today.toDateString();
+      }
+      if (tab === "week") {
+        return posted >= new Date(Date.now() - 7 * 86400000);
+      }
+      return true;
+    });
 
   return (
     <>
