@@ -22,6 +22,9 @@ export default function AdminReportsPage() {
       setNotFound(true);
       return;
     }
+    // Store rehydrates after first render, so the early return above may
+    // have already latched notFound true before cognitoToken was ready.
+    setNotFound(false);
     fetch("/api/admin/reports", {
       headers: { Authorization: `Bearer ${cognitoToken}` },
     }).then(async (res) => {
