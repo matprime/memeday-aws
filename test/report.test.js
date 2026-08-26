@@ -559,7 +559,7 @@ test("admin routes: a signed-out caller gets 404 from the reports listing, the t
 test("dismissReport: removes only the queue item — the meme, its status, and the report items are untouched", async (t) => {
   if (skipIfNoCredentials(t)) return;
 
-  const { createMeme, createReport, dismissReport, getMemeById } = await load("lib/db.ts");
+  const { createMeme, dismissReport, getMemeById } = await load("lib/db.ts");
   const { dynamo, TABLE } = await load("lib/dynamo.ts");
   const { PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
 
@@ -568,7 +568,23 @@ test("dismissReport: removes only the queue item — the meme, its status, and t
   const identityHash = `dismiss-reporter-${Date.now()}`;
   const queueKey = { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${meme.id}` };
 
-  await createReport({ memeId: meme.id, identityHash, reason: "spam" });
+  // The REPORT# item is written directly rather than through createReport.
+  // createReport's insert fires a Streams event, and StreamHandler reacts to
+  // it by recreating this same REPORTQUEUE#GLOBAL item. On CI that event
+  // landed after the dismiss below, so the delete looked like it had never
+  // happened. Seeding both items directly keeps the audit-trail assertion
+  // without the race; createReport itself is covered by the tests above.
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: {
+        PK: `MEME#${meme.id}`,
+        SK: `REPORT#${identityHash}`,
+        reason: "spam",
+        createdAt: new Date().toISOString(),
+      },
+    })
+  );
   await dynamo.send(
     new PutCommand({
       TableName: TABLE,
