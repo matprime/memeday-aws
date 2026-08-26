@@ -5,7 +5,6 @@ const path = require("node:path");
 const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { hasAwsCredentials } = require("./helpers/aws-credentials");
-const { deleteReportQueueItemWhenSettled } = require("./helpers/report-queue-cleanup");
 
 // .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
 for (const envFile of [".env.local", ".env"]) {
@@ -96,7 +95,6 @@ test("createReport: first report from a new identity is flagged first, a repeat 
     );
     assert.strictEqual(Item.reason, "original reason", "first write wins: the reason is never updated on a repeat");
   } finally {
-    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityHash}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
   }
@@ -130,7 +128,6 @@ test("createReport: a second report from a different identity on the same meme i
       "notify-on-first-report fires only for the very first reporter, not every distinct one"
     );
   } finally {
-    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityA}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityB}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
@@ -159,7 +156,6 @@ test("getReportedMemeIds: returns only the memes this identity has reported", as
     const reported = await getReportedMemeIds(identityHash, [memeA.id, memeB.id]);
     assert.deepStrictEqual(reported, [memeA.id], "only the reported meme comes back, the untouched one does not");
   } finally {
-    await deleteReportQueueItemWhenSettled(dynamo, TABLE, memeA.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeA.id}`, SK: `REPORT#${identityHash}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeA.id}`, SK: `MEME#${memeA.id}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeB.id}`, SK: `MEME#${memeB.id}` } }));
@@ -455,7 +451,6 @@ test("report route: unauthenticated report succeeds, publishes to SNS once, and 
     assert.strictEqual(memeAfter.status, "active", "reporting never changes the meme's own status");
   } finally {
     sns.send = originalSend;
-    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${require("crypto").createHash("sha256").update(process.env.WALLET_AUTH_SECRET).update(ip).digest("hex").slice(0, 12)}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
     const { RATE_LIMITS } = await load("lib/rate-limit-config.ts");
