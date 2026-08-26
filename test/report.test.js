@@ -5,6 +5,10 @@ const path = require("node:path");
 const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { hasAwsCredentials } = require("./helpers/aws-credentials");
+const {
+  deleteReportQueueItemWhenSettled,
+  waitForReportQueueItem,
+} = require("./helpers/report-queue-cleanup");
 
 // .env.local overrides .env, same precedence Next.js uses — dev credentials/table names live there.
 for (const envFile of [".env.local", ".env"]) {
@@ -95,6 +99,7 @@ test("createReport: first report from a new identity is flagged first, a repeat 
     );
     assert.strictEqual(Item.reason, "original reason", "first write wins: the reason is never updated on a repeat");
   } finally {
+    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityHash}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
   }
@@ -128,6 +133,7 @@ test("createReport: a second report from a different identity on the same meme i
       "notify-on-first-report fires only for the very first reporter, not every distinct one"
     );
   } finally {
+    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityA}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityB}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
@@ -156,6 +162,7 @@ test("getReportedMemeIds: returns only the memes this identity has reported", as
     const reported = await getReportedMemeIds(identityHash, [memeA.id, memeB.id]);
     assert.deepStrictEqual(reported, [memeA.id], "only the reported meme comes back, the untouched one does not");
   } finally {
+    await deleteReportQueueItemWhenSettled(dynamo, TABLE, memeA.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeA.id}`, SK: `REPORT#${identityHash}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeA.id}`, SK: `MEME#${memeA.id}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeB.id}`, SK: `MEME#${memeB.id}` } }));
@@ -451,6 +458,7 @@ test("report route: unauthenticated report succeeds, publishes to SNS once, and 
     assert.strictEqual(memeAfter.status, "active", "reporting never changes the meme's own status");
   } finally {
     sns.send = originalSend;
+    await deleteReportQueueItemWhenSettled(dynamo, TABLE, meme.id);
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${require("crypto").createHash("sha256").update(process.env.WALLET_AUTH_SECRET).update(ip).digest("hex").slice(0, 12)}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `MEME#${meme.id}` } }));
     const { RATE_LIMITS } = await load("lib/rate-limit-config.ts");
@@ -558,22 +566,24 @@ test("admin routes: a signed-out caller gets 404 from the reports listing, the t
 
 test("dismissReport: removes only the queue item — the meme, its status, and the report items are untouched", async (t) => {
   if (skipIfNoCredentials(t)) return;
-
   const { createMeme, dismissReport, getMemeById } = await load("lib/db.ts");
   const { dynamo, TABLE } = await load("lib/dynamo.ts");
   const { PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
-
+ 
   const creatorId = `test-dismiss-${Date.now()}`;
   const meme = await createMeme({ creatorId, s3Key: "dismiss.png", caption: "dismiss test", isNFT: false });
   const identityHash = `dismiss-reporter-${Date.now()}`;
   const queueKey = { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${meme.id}` };
-
-  // The REPORT# item is written directly rather than through createReport.
-  // createReport's insert fires a Streams event, and StreamHandler reacts to
-  // it by recreating this same REPORTQUEUE#GLOBAL item. On CI that event
-  // landed after the dismiss below, so the delete looked like it had never
-  // happened. Seeding both items directly keeps the audit-trail assertion
-  // without the race; createReport itself is covered by the tests above.
+ 
+  // The REPORT# item is written directly rather than through createReport,
+  // to keep this test on dismiss rather than on the report route. That does
+  // NOT sidestep StreamHandler: Streams fire on any write to the table, so
+  // this insert still makes the handler write the REPORTQUEUE#GLOBAL row. An
+  // earlier version of this test seeded that row by hand and dismissed
+  // immediately, which raced the handler: the dismiss deleted the seeded row,
+  // the handler then wrote its own, and the assertion below saw a row that
+  // looked like the delete had never happened. So wait for the handler's real
+  // row and dismiss that instead.
   await dynamo.send(
     new PutCommand({
       TableName: TABLE,
@@ -585,33 +595,18 @@ test("dismissReport: removes only the queue item — the meme, its status, and t
       },
     })
   );
-  await dynamo.send(
-    new PutCommand({
-      TableName: TABLE,
-      Item: {
-        PK: "REPORTQUEUE#GLOBAL",
-        SK: `MEME#${meme.id}`,
-        memeId: meme.id,
-        creatorId,
-        s3Key: "dismiss.png",
-        reason: "spam",
-        firstReportedAt: new Date().toISOString(),
-        lastReportedAt: new Date().toISOString(),
-        reporterHashes: new Set([identityHash]),
-      },
-    })
-  );
-
+ 
   try {
+    const queueBefore = await waitForReportQueueItem(dynamo, TABLE, meme.id);
+    assert.ok(queueBefore, "StreamHandler materialized the queue item before the dismiss ran");
+ 
     await dismissReport(meme.id);
-
+ 
     const queueAfter = await dynamo.send(new GetCommand({ TableName: TABLE, Key: queueKey }));
     assert.strictEqual(queueAfter.Item, undefined, "queue item is gone");
-
     const memeAfter = await getMemeById(meme.id);
     assert.ok(memeAfter, "the meme itself still exists");
     assert.strictEqual(memeAfter.status, "active", "dismiss never touches the meme's status");
-
     const reportAfter = await dynamo.send(
       new GetCommand({ TableName: TABLE, Key: { PK: `MEME#${meme.id}`, SK: `REPORT#${identityHash}` } })
     );

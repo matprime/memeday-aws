@@ -22,6 +22,9 @@ export default function AdminReportsPage() {
       setNotFound(true);
       return;
     }
+    // Store rehydrates after first render, so the early return above may
+    // have already latched notFound true before cognitoToken was ready.
+    setNotFound(false);
     fetch("/api/admin/reports", {
       headers: { Authorization: `Bearer ${cognitoToken}` },
     }).then(async (res) => {
@@ -96,7 +99,13 @@ export default function AdminReportsPage() {
                 className="w-24 h-24 object-cover rounded-lg bg-gray-900 shrink-0"
               />
               <div className="flex-1 min-w-0">
-                <p className="text-white font-semibold break-words">{report.reason}</p>
+                {/* memeId first: it is the only field shared with the takedown
+                    alert email, so it is what an operator correlates a queue
+                    row against. select-all makes it one click to copy. */}
+                <p className="text-xs text-gray-400 font-mono break-all select-all">
+                  {report.memeId}
+                </p>
+                <p className="text-white font-semibold break-words mt-1">{report.reason}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {report.reporterCount} distinct reporter{report.reporterCount === 1 ? "" : "s"} ·
                   first {formatDistanceToNow(new Date(report.firstReportedAt), { addSuffix: true })} ·
