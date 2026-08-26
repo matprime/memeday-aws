@@ -95,6 +95,12 @@ export class MemeDayStack extends cdk.Stack {
       },
     });
 
+    // KAN-43: membership is assigned manually after deploy, no CfnUserPoolGroupMembership here.
+    new cognito.CfnUserPoolGroup(this, "AdminsGroup", {
+      userPoolId: userPool.userPoolId,
+      groupName: "admins",
+    });
+
     new cdk.CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
     new cdk.CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
 
@@ -299,6 +305,34 @@ export class MemeDayStack extends cdk.Stack {
       },
     });
 
+    // --- KAN-43 takedown wiring: streamHandler needs the bucket, the
+    // distribution, and the alerts topic, none of which exist yet when
+    // streamHandler itself is declared above. ---
+    streamHandler.addEnvironment("S3_BUCKET_NAME", bucket.bucketName);
+    streamHandler.addEnvironment("CLOUDFRONT_DISTRIBUTION_ID", distribution.distributionId);
+    streamHandler.addEnvironment("SNS_ALERTS_TOPIC_ARN", alertTopic.topicArn);
+
+    // Least-privilege, same convention as s3Handler/moderationHandler above:
+    // scoped to uploads/*, the one distribution, and the one alerts topic.
+    streamHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:DeleteObject"],
+        resources: [`${bucket.bucketArn}/uploads/*`],
+      })
+    );
+    streamHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["cloudfront:CreateInvalidation"],
+        resources: [`arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`],
+      })
+    );
+    streamHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["sns:Publish"],
+        resources: [alertTopic.topicArn],
+      })
+    );
+
     // --- Vercel runtime IAM user (KAN-17) ---
     // memeday-runtime-prod / memeday-runtime-dev already exist in AWS,
     // created out-of-band before this stack managed them. A one-time
@@ -315,8 +349,10 @@ export class MemeDayStack extends cdk.Stack {
       new iam.Policy(this, "RuntimeUserPolicy", {
         statements: [
           // DynamoDB — actions used by lib/db.ts. Scan excluded: getAllUsers
-          // (lib/db.ts:449) has zero callers, so it's unused per KAN-17's
-          // no-unused-permissions acceptance criteria.
+          // (lib/db.ts) and getOpenReports (KAN-43 admin listing, now a Query
+          // against the Streams-maintained REPORTQUEUE#GLOBAL view) have zero
+          // callers of Scan, so it's unused per KAN-17's no-unused-permissions
+          // acceptance criteria.
           new iam.PolicyStatement({
             actions: [
               "dynamodb:GetItem",
@@ -363,6 +399,12 @@ export class MemeDayStack extends cdk.Stack {
             conditions: {
               StringEquals: { "cloudwatch:namespace": "MemeDay" },
             },
+          }),
+          // SNS — publish on first report only (KAN-43), scoped to the single
+          // alerts topic. Nothing else added to this statement.
+          new iam.PolicyStatement({
+            actions: ["sns:Publish"],
+            resources: [alertTopic.topicArn],
           }),
         ],
       })

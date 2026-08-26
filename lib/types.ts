@@ -80,7 +80,7 @@ export interface DbMeme {
   imageUrl: string;         // CloudFront URL (derived from s3Key at read time)
   caption: string;
   nftMint?: string;         // Solana mint address
-  status: "active" | "listed" | "sold" | "pending_review"; // pending_review = flagged by content moderation (KAN-44), never feed/profile/direct-URL visible
+  status: "active" | "listed" | "sold" | "pending_review" | "removed"; // pending_review = flagged by content moderation (KAN-44); removed = admin takedown (KAN-43) — both never feed/profile/direct-URL visible
   likeCount: number;
   commentCount: number;
   score: number;
@@ -105,4 +105,14 @@ export interface DbComment {
   walletAddr?: string;      // for display (if user has a linked wallet)
   body: string;
   createdAt: string;
+}
+
+export interface OpenReport {
+  memeId: string;
+  s3Key: string;
+  imageUrl: string;
+  reason: string;           // reason from the earliest report
+  reporterCount: number;    // distinct reporters, not total reports
+  firstReportedAt: string;
+  lastReportedAt: string;
 }

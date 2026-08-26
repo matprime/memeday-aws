@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowUp, MessageCircle, ShoppingCart, Zap, Gift } from "lucide-react";
+import { ArrowUp, MessageCircle, ShoppingCart, Zap, Gift, Flag } from "lucide-react";
 import { DbMeme } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { formatDistanceToNow } from "date-fns";
@@ -24,7 +24,8 @@ function shortId(id: string) {
 }
 
 export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
-  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, addToast } = useAppStore();
+  const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, reportOnMeme, addToast } =
+    useAppStore();
   const { enabled, disabledMessage } = useSolanaConfig();
   const [votes, setVotes] = useState(meme.likeCount);
   const [tipOpen, setTipOpen] = useState(false);
@@ -68,6 +69,25 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
       track(EVENTS.voteCast, { memeId: meme.id, surface: "feed" });
       addToast(`Voted for "${meme.caption.slice(0, 30)}…"`, "success");
     }
+  };
+
+  const handleReport = async () => {
+    const reason = window.prompt("Why are you reporting this meme?")?.trim();
+    if (!reason) return;
+    const res = await fetch(`/api/memes/${meme.id}/report`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(cognitoToken ? { Authorization: `Bearer ${cognitoToken}` } : {}),
+      },
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) {
+      addToast(res.status === 429 ? "Slow down — too many reports" : "Report failed", "error");
+      return;
+    }
+    reportOnMeme(userId, meme.id);
+    addToast("Reported. You won't see this in your feed anymore.", "success");
   };
 
   return (
@@ -176,6 +196,14 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
             >
               <Gift size={14} />
               Tip
+            </button>
+
+            <button
+              onClick={handleReport}
+              title="Report"
+              className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-white bg-bg/60 hover:bg-white/10 border border-border/50 transition-colors"
+            >
+              <Flag size={14} />
             </button>
           </div>
 

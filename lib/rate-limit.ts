@@ -80,7 +80,7 @@ function getEnv(key: string): string {
 // run from the EU on eu-west-1), so logs only ever get a salted hash. An
 // unsalted hash of an IPv4 address is reversible by brute force since the
 // whole address space is enumerable — the salt is what stops that.
-function hashIdentity(identity: string): string {
+export function hashIdentity(identity: string): string {
   return createHash("sha256")
     .update(getEnv("WALLET_AUTH_SECRET"))
     .update(identity)
