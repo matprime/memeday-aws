@@ -115,7 +115,7 @@ export class MemeDayStack extends cdk.Stack {
       // entry sits in the repo root (../../), so projectRoot must point there too —
       // otherwise CDK treats infra/ as the root and rejects the path as outside it.
       projectRoot: path.join(__dirname, "../.."),
-      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      depsLockFilePath: path.join(__dirname, "../../lambdas/stream-handler/package-lock.json"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
@@ -210,7 +210,7 @@ export class MemeDayStack extends cdk.Stack {
     const s3Handler = new NodejsFunction(this, "S3Handler", {
       entry: path.join(__dirname, "../../lambdas/s3-handler/index.ts"),
       projectRoot: path.join(__dirname, "../.."),
-      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      depsLockFilePath: path.join(__dirname, "../../lambdas/s3-handler/package-lock.json"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
@@ -255,7 +255,7 @@ export class MemeDayStack extends cdk.Stack {
     const moderationHandler = new NodejsFunction(this, "ModerationHandler", {
       entry: path.join(__dirname, "../../lambdas/moderation-handler/index.ts"),
       projectRoot: path.join(__dirname, "../.."),
-      depsLockFilePath: path.join(__dirname, "../../package-lock.json"),
+      depsLockFilePath: path.join(__dirname, "../../lambdas/moderation-handler/package-lock.json"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
