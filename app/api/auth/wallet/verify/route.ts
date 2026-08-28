@@ -8,6 +8,7 @@ import {
   AdminGetUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
+import { setRefreshCookie } from "@/lib/auth-cookie";
 
 const DER_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const NONCE_TTL_MS = 5 * 60 * 1000;
@@ -168,13 +169,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Auth failed — no token returned" }, { status: 500 });
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       accessToken: tokens.AccessToken,
       expiresIn: tokens.ExpiresIn,
       // Lets the client tell a first-ever wallet sign-up apart from a return
       // login, which is otherwise indistinguishable — both just get a token.
       isNewUser,
     });
+    // The refresh token never reaches page JS — it goes back as an httpOnly
+    // cookie that only /api/auth/refresh reads.
+    if (tokens.RefreshToken) setRefreshCookie(res, tokens.RefreshToken);
+    return res;
   } catch (err: any) {
     console.error("Wallet auth error:", err);
     return NextResponse.json({ error: "Authentication failed" }, { status: 500 });

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Send } from "lucide-react";
 import { DbComment } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
+import { getAccessToken } from "@/lib/session";
 import { EVENTS, track } from "@/lib/analytics";
 import { formatDistanceToNow } from "date-fns";
 
@@ -28,11 +29,17 @@ export function CommentSection({ memeId, initialComments, onCommentAdded }: Prop
     }
     if (!body.trim()) return;
 
+    const token = await getAccessToken();
+    if (!token) {
+      addToast("Session expired — sign in again to comment", "error");
+      return;
+    }
+
     const res = await fetch("/api/comments", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${cognitoToken}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ meme_id: memeId, body: body.trim() }),
     });

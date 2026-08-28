@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAppStore } from "@/lib/store";
+import { signOut } from "@/lib/session";
 import { EVENTS, track } from "@/lib/analytics";
 
 // Triggers Cognito auth automatically whenever Phantom connects.
@@ -38,7 +39,9 @@ export function WalletAuthSync() {
       // a wallet disconnect. Skip until we've seen a real connect, so the
       // pre-autoConnect transient false doesn't wipe a persisted session.
       if (hasConnectedRef.current && useAppStore.getState().authMethod === "wallet") {
-        setCognitoToken(null);
+        // Drops the refresh cookie too — a disconnected wallet must not leave
+        // a 30-day renewable session behind.
+        void signOut();
       }
       return;
     }
@@ -94,7 +97,10 @@ export function WalletAuthSync() {
         authInFlight.current = false;
       }
     })();
-  }, [connected, publicKey, signMessage]);
+    // cognitoToken is a dep so that SessionSync clearing a dead session
+    // re-runs this and re-authenticates, instead of the stale-token state
+    // sitting here until the user manually disconnects.
+  }, [connected, publicKey, signMessage, cognitoToken]);
 
   return null;
 }

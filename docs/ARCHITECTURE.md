@@ -89,8 +89,9 @@ touched by TTL.
   the other can be linked later. The pool enforces this: `email` is
   `required: false`, sign-in aliases are username + email, and wallet users
   get the opaque username `wallet_<walletAddress>`.
-- Enabled auth flows are `adminUserPassword` (wallet login) and `userSrp`
-  (email/password) only.
+- Enabled auth flows are `adminUserPassword` (wallet login), `userSrp`
+  (email/password), and `refreshTokenAuth` (session renewal — CDK adds
+  `ALLOW_REFRESH_TOKEN_AUTH` to every client by default).
 - Email login is standard Cognito. The route resolves an email to a username
   with `ListUsers`, not via a DynamoDB index.
 - Wallet login (`app/api/auth/wallet/`):
@@ -116,8 +117,25 @@ touched by TTL.
   the only issuer of sessions.
 - API routes authenticate the caller by verifying the Cognito **access**
   token with `aws-jwt-verify` (`lib/cognito.ts`) and taking `payload.sub`.
+- Session lifetime uses Cognito's own two-token model. The access token is
+  short-lived (pool default, 60 min) and lives in `localStorage`; the refresh
+  token lives 30 days in an httpOnly `md_rt` cookie scoped to `/api/auth`, so
+  page JS can never read it. `/api/auth/refresh` trades that cookie for a new
+  access token via `AdminInitiateAuth` with `AuthFlow: REFRESH_TOKEN_AUTH`.
+  `/api/auth/logout` clears the cookie.
+- A stored access token is never trusted because it exists — only because its
+  `exp` is still in the future. `lib/session.ts` `getAccessToken()` is the only
+  supported way to obtain a token for an API call; it renews first if the
+  stored one is stale. `components/SessionSync.tsx` runs the same check once
+  per page load so the UI's signed-in state reflects a session that actually
+  works. Checking a token's presence instead of its expiry is what let the app
+  render as connected on top of a dead session.
+- Consequence: a returning user is renewed silently. The wallet is not asked to
+  re-sign the nonce on refresh or on a return visit within the refresh token's
+  30 days; re-signing happens only when that token is gone or rejected.
 - There is no separate or parallel wallet/JWT session system alongside
-  Cognito.
+  Cognito. The refresh cookie is transport for a Cognito-issued token, not a
+  second session mechanism.
 - `upsertUser` writes sparse `EMAIL#` (GSI1) and `WALLET#` (GSI2) index keys.
   Only the `WALLET#` one is currently read by any query. See GSI notes below.
 
@@ -392,6 +410,9 @@ An operator review path is PLANNED and unbuilt.
 - Wallet login verifies the signature in the `/api/auth/wallet/verify` API
   route, then issues a Cognito session via admin-initiated auth; do not build
   a parallel session/JWT system alongside Cognito.
+- Client code gets access tokens from `getAccessToken()` (`lib/session.ts`),
+  never by reading `cognitoToken` out of the store. Reading the store directly
+  sends whatever is in `localStorage`, expired or not.
 - Never read `SOLANA_*` or hardcode a cluster outside `lib/solana/network.ts`.
 - Never hardcode a rate limit outside `lib/rate-limit-config.ts`.
 - Every new send-and-confirm path must poll `getSignatureStatuses`; the RPC

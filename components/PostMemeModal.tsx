@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { getAccessToken } from "@/lib/session";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
 import { mintMemeNft } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
@@ -67,6 +68,15 @@ export function PostMemeModal({ onClose }: Props) {
     handleFile(e.dataTransfer.files?.[0] ?? null);
   };
 
+  // Every authed call goes through this rather than reading cognitoToken
+  // directly: the posting flow spans minting and Bags calls, so the token can
+  // expire partway through and needs renewing between steps.
+  const requireToken = async (): Promise<string> => {
+    const token = await getAccessToken();
+    if (!token) throw new Error("Session expired — sign in again");
+    return token;
+  };
+
   const uploadImage = async (
     file: File,
     caption: string
@@ -74,10 +84,16 @@ export function PostMemeModal({ onClose }: Props) {
     const ext = file.name.split(".").pop() ?? "jpg";
     const urlRes = await fetch(
       `/api/upload-url?ext=${ext}&caption=${encodeURIComponent(caption)}`,
-      { headers: { Authorization: `Bearer ${cognitoToken}` } }
+      { headers: { Authorization: `Bearer ${await requireToken()}` } }
     );
     if (!urlRes.ok) {
-      throw new Error(urlRes.status === 429 ? "Slow down — too many uploads" : "Failed to get upload URL");
+      throw new Error(
+        urlRes.status === 429
+          ? "Slow down — too many uploads"
+          : urlRes.status === 401
+            ? "Session expired — sign in again"
+            : "Failed to get upload URL"
+      );
     }
     const { presignedUrl, pendingId, imageUrl } = await urlRes.json();
     const putRes = await fetch(presignedUrl, {
@@ -95,7 +111,7 @@ export function PostMemeModal({ onClose }: Props) {
   const waitForValidation = async (pendingId: string): Promise<void> => {
     for (let attempt = 0; attempt < 10; attempt++) {
       const res = await fetch(`/api/upload-status/${pendingId}`, {
-        headers: { Authorization: `Bearer ${cognitoToken}` },
+        headers: { Authorization: `Bearer ${await requireToken()}` },
       });
       if (!res.ok) throw new Error("Failed to check upload status");
       const { status, reason } = await res.json();
@@ -170,7 +186,7 @@ export function PostMemeModal({ onClose }: Props) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${cognitoToken}`,
+          Authorization: `Bearer ${await requireToken()}`,
         },
         body: JSON.stringify({
           walletAddr: walletAddress || undefined,
@@ -184,7 +200,7 @@ export function PostMemeModal({ onClose }: Props) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${cognitoToken}`,
+          Authorization: `Bearer ${await requireToken()}`,
         },
         body: JSON.stringify({
           pendingId,
