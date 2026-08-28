@@ -101,7 +101,13 @@ test("session: login issues a refresh cookie that mints a fresh access token", a
     const loginRes = await login(
       new Request("http://localhost/api/auth/email/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // See KAN-70: without this, getClientIp() falls back to "unknown"
+          // and this test shares loginPerIp's counter with every other CI
+          // run and test file hitting this route in the same window.
+          "x-forwarded-for": `test-session-refresh-${Date.now()}`,
+        },
         body: JSON.stringify({ email, password }),
       })
     );
