@@ -6,6 +6,7 @@ import Image from "next/image";
 import { ArrowUp, MessageCircle, ShoppingCart, Zap, Gift, Flag } from "lucide-react";
 import { DbMeme } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
+import { getAccessToken } from "@/lib/session";
 import { formatDistanceToNow } from "date-fns";
 import { CreatorAvatar } from "./CreatorAvatar";
 import { TipModal } from "./TipModal";
@@ -50,11 +51,16 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
       addToast("You already voted for this meme", "error");
       return;
     }
+    const token = await getAccessToken();
+    if (!token) {
+      addToast("Session expired — sign in again to vote", "error");
+      return;
+    }
     voteOnMeme(userId, meme.id);
     setVotes((v) => v + 1);
     const res = await fetch(`/api/memes/${meme.id}/vote`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${cognitoToken}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
       addToast("Vote failed", "error");

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { PostMemeModal } from "./PostMemeModal";
 import { EmailAuthModal } from "./EmailAuthModal";
 import { useAppStore } from "@/lib/store";
+import { signOut } from "@/lib/session";
 import { useSolanaConfig } from "./WalletProvider";
 
 function parseTokenSub(token: string): string | null {
@@ -29,13 +30,13 @@ export function Navbar() {
   const pathname = usePathname();
   const { network } = useSolanaConfig();
   const { publicKey } = useWallet();
-  const { cognitoToken, authMethod, authEmail, setCognitoToken, addToast } = useAppStore();
+  const { cognitoToken, authMethod, authEmail, addToast } = useAppStore();
   const userId = cognitoToken ? parseTokenSub(cognitoToken) : null;
   const [postOpen, setPostOpen] = useState(false);
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
 
-  const handleEmailSignOut = () => {
-    setCognitoToken(null);
+  const handleEmailSignOut = async () => {
+    await signOut();
     addToast("Signed out.", "success");
   };
 

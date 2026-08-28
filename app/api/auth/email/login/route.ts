@@ -6,6 +6,7 @@ import {
   ResendConfirmationCodeCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
+import { setRefreshCookie } from "@/lib/auth-cookie";
 
 function cognitoClient() {
   return new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
@@ -47,10 +48,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Auth failed — no token returned" }, { status: 500 });
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       accessToken: tokens.AccessToken,
       expiresIn: tokens.ExpiresIn,
     });
+    if (tokens.RefreshToken) setRefreshCookie(res, tokens.RefreshToken);
+    return res;
   } catch (err: any) {
     if (err.name === "NotAuthorizedException") {
       return NextResponse.json({ error: "Incorrect email or password" }, { status: 401 });
