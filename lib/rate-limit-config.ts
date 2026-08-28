@@ -38,6 +38,16 @@ export const RATE_LIMITS = {
   confirmPerIp: { key: "confirmPerIp", max: 10, windowSeconds: HOUR },
   walletNoncePerIp: { key: "walletNoncePerIp", max: 20, windowSeconds: 15 * MINUTE },
   walletVerifyPerIp: { key: "walletVerifyPerIp", max: 20, windowSeconds: 15 * MINUTE },
+  // Hit once per tab on load and roughly hourly per active session, so this
+  // sits well above loginPerIp — it is an abuse ceiling, not a login throttle.
+  refreshPerIp: { key: "refreshPerIp", max: 60, windowSeconds: 15 * MINUTE },
+
+  // ── Content report (KAN-43) ─────────────────────────────────────────────
+  // Unauthenticated route, so the per-IP ceiling is the only layer that
+  // applies to anonymous reporters. Per-user applies in addition when the
+  // caller is authenticated.
+  reportPerUser: { key: "reportPerUser", max: 10, windowSeconds: DAY },
+  reportPerIp: { key: "reportPerIp", max: 20, windowSeconds: DAY },
 } as const satisfies Record<string, RateLimitDef>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;

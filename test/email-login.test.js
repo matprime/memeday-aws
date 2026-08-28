@@ -92,7 +92,15 @@ test("email auth: sign-in with email returns a Cognito token", async (t) => {
     login(
       new Request("http://localhost/api/auth/email/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // Without this, getClientIp() falls back to the literal string
+          // "unknown", and loginPerIp (max 10 / 15min) becomes a single
+          // shared DynamoDB counter across every CI run and test file that
+          // hits this route in the same window. A unique value per test run
+          // gives this test its own isolated bucket. See KAN-70.
+          "x-forwarded-for": `test-email-login-${Date.now()}`,
+        },
         body: JSON.stringify(body),
       })
     );

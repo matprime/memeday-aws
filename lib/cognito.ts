@@ -29,3 +29,18 @@ export async function getUserIdFromRequest(req: Request): Promise<string | null>
     return null;
   }
 }
+
+// cognito:groups is a standard claim Cognito adds to the access token for any
+// user in at least one group (KAN-43 admin gate) — no auth flow change needed,
+// just reading a claim the verifier already had.
+export async function getUserGroupsFromRequest(req: Request): Promise<string[]> {
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Bearer ")) return [];
+  const token = auth.slice(7);
+  try {
+    const payload = await getVerifier().verify(token);
+    return payload["cognito:groups"] ?? [];
+  } catch {
+    return [];
+  }
+}

@@ -10,7 +10,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
-import type { DbComment, DbMeme, DbPendingUpload, DbUser } from "./types";
+import type { DbComment, DbMeme, DbPendingUpload, DbUser, OpenReport } from "./types";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -144,6 +144,7 @@ export async function getLeaderboardCounts(): Promise<
 }
 
 // Flagged for review = never reachable by direct URL (KAN-44).
+// Removed (admin takedown, KAN-43) reuses the same not-found handling.
 export async function getMemeById(id: string): Promise<DbMeme | null> {
   noStore();
   const result = await dynamo.send(
@@ -154,7 +155,7 @@ export async function getMemeById(id: string): Promise<DbMeme | null> {
   );
   if (!result.Item) return null;
   const meme = parseMeme(result.Item as Record<string, unknown>);
-  if (meme.status === "pending_review") return null;
+  if (meme.status === "pending_review" || meme.status === "removed") return null;
   return meme;
 }
 
@@ -527,4 +528,170 @@ export async function getNftMetadata(id: string): Promise<NftMetadataRow | null>
     image_url: item.image_url as string,
     description: item.description as string,
   };
+}
+
+// Dedupe on (identity, meme) via a conditional PutItem on REPORT#<identityHash>,
+// same pattern as voteMeme's LIKE#<userId> dedupe. First write wins: a repeat
+// report from the same identity is rejected at the condition check and the
+// original reason is never touched.
+export async function createReport(report: {
+  memeId: string;
+  identityHash: string;
+  reporterId?: string;
+  reason: string;
+}): Promise<{ isFirstReport: boolean }> {
+  const item: Record<string, unknown> = {
+    PK: `MEME#${report.memeId}`,
+    SK: `REPORT#${report.identityHash}`,
+    reason: report.reason,
+    createdAt: new Date().toISOString(),
+  };
+  if (report.reporterId) item.reporterId = report.reporterId;
+
+  try {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(PK)",
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return { isFirstReport: false };
+    }
+    throw err;
+  }
+
+  // Consistent read: the SNS notify-on-first-report decision below depends on
+  // this count being accurate immediately after the write above.
+  const { Count } = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+      ExpressionAttributeValues: { ":pk": `MEME#${report.memeId}`, ":prefix": "REPORT#" },
+      Select: "COUNT",
+      ConsistentRead: true,
+    })
+  );
+  return { isFirstReport: (Count ?? 0) === 1 };
+}
+
+// Which of the given memeIds does this identity already have a REPORT# item
+// for — same existing per-meme access pattern as "did user like?" (see
+// ARCHITECTURE.md), just checked across the currently-visible feed instead of
+// one meme. Used to hide previously-reported memes from an authenticated
+// reporter's own feed across sessions, without a new index.
+export async function getReportedMemeIds(
+  identityHash: string,
+  memeIds: string[]
+): Promise<string[]> {
+  if (memeIds.length === 0) return [];
+  const batchResult = await dynamo.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [TABLE]: {
+          Keys: memeIds.map((id) => ({ PK: `MEME#${id}`, SK: `REPORT#${identityHash}` })),
+        },
+      },
+    })
+  );
+  return (batchResult.Responses?.[TABLE] ?? []).map(
+    (item) => (item.PK as string).slice("MEME#".length)
+  );
+}
+
+// Distinct reporters + reason/timestamps for a meme's REPORT# items, used by
+// both the admin listing (getOpenReports) and the takedown Lambda's SNS body.
+export async function getReportSummary(
+  memeId: string
+): Promise<{ reason: string; reporterCount: number; firstReportedAt: string; lastReportedAt: string } | null> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+      ExpressionAttributeValues: { ":pk": `MEME#${memeId}`, ":prefix": "REPORT#" },
+    })
+  );
+  const items = result.Items ?? [];
+  if (items.length === 0) return null;
+  const sorted = [...items].sort((a, b) =>
+    (a.createdAt as string).localeCompare(b.createdAt as string)
+  );
+  return {
+    reason: sorted[0].reason as string,
+    reporterCount: items.length,
+    firstReportedAt: sorted[0].createdAt as string,
+    lastReportedAt: sorted[sorted.length - 1].createdAt as string,
+  };
+}
+
+// REPORTQUEUE#GLOBAL is a Streams-maintained materialized view (KAN-43
+// follow-up), same pattern as FEED#GLOBAL/LEADERBOARD#GLOBAL: the Streams
+// handler upserts one queue item per meme on a REPORT# insert and deletes it
+// on takedown, so this is a single Query, no Scan and no new GSI. The SK
+// (memeId) isn't time-ordered, so ordering happens here instead.
+export async function getOpenReports(): Promise<OpenReport[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": "REPORTQUEUE#GLOBAL" },
+    })
+  );
+  const items = result.Items ?? [];
+  return items
+    .map((item) => ({
+      memeId: item.memeId as string,
+      s3Key: item.s3Key as string,
+      imageUrl: cfUrl(item.s3Key as string),
+      reason: item.reason as string,
+      reporterCount: (item.reporterHashes as Set<string> | undefined)?.size ?? 0,
+      firstReportedAt: item.firstReportedAt as string,
+      lastReportedAt: item.lastReportedAt as string,
+    }))
+    .sort((a, b) => b.lastReportedAt.localeCompare(a.lastReportedAt));
+}
+
+// Vercel side of takedown (KAN-43): flips status only. S3 delete, CloudFront
+// invalidation, and the takedown SNS notification are the Streams handler's
+// job, triggered by this write. ConditionExpression guards against taking
+// down a memeId that doesn't exist.
+export async function takedownMeme(memeId: string, operatorId: string): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+        UpdateExpression: "SET #status = :removed, removedBy = :operatorId",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":removed": "removed", ":operatorId": operatorId },
+        ConditionExpression: "attribute_exists(PK)",
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+// Vercel side of dismiss (KAN-43 follow-up): deletes only the
+// REPORTQUEUE#GLOBAL item (same key the Streams handler's
+// deleteReportQueueItem targets on takedown, see lambdas/stream-handler).
+// Touches nothing else — the meme item, its status, and the REPORT# audit
+// trail under MEME#<memeId> are untouched, and this never publishes to SNS.
+// No ConditionExpression: deleting an already-gone or never-existed queue
+// item is a harmless no-op, there's no phantom item to guard against.
+export async function dismissReport(memeId: string): Promise<void> {
+  await dynamo.send(
+    new DeleteCommand({
+      TableName: TABLE,
+      Key: { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${memeId}` },
+    })
+  );
 }

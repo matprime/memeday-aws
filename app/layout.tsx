@@ -4,6 +4,7 @@ import { SolanaWalletProvider } from "@/components/WalletProvider";
 import { Navbar } from "@/components/Navbar";
 import { BagsToastContainer } from "@/components/BagsToast";
 import { WalletAuthSync } from "@/components/WalletAuthSync";
+import { SessionSync } from "@/components/SessionSync";
 import { AnalyticsInit } from "@/components/AnalyticsInit";
 import { Analytics } from "@vercel/analytics/next";
 import {
@@ -35,6 +36,7 @@ export default function RootLayout({
           enabled={SOLANA_ENABLED}
           disabledMessage={SOLANA_DISABLED_MESSAGE}
         >
+          <SessionSync />
           <WalletAuthSync />
           <AnalyticsInit />
           <Navbar />
