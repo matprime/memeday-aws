@@ -149,7 +149,7 @@ test("S3Handler: rejected upload (fails validation) never invokes ModerationHand
   const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
 
   // Minimal valid 1×1 PNG — passes the magic-bytes check but fails the
-  // MIN_DIMENSION=600 check, so it's rejected before any re-encode/markActive.
+  // MIN_LONG_EDGE=400/MIN_SHORT_EDGE=150 check, so it's rejected before any re-encode/markActive.
   const PNG_1X1 = Buffer.from(
     "89504e470d0a1a0a0000000d494844520000000100000001080600000" +
       "01f15c4890000000a4944415478016360000000020001e221bc33000000004945" +

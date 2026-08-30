@@ -153,7 +153,7 @@ export function MemeCard({ meme, featured = false, commentCount = 0 }: Props) {
         </div>
 
         <div className="mt-3 pt-3 border-t border-border/50">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleVote}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${

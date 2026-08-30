@@ -19,7 +19,8 @@ const TABLE = process.env.DYNAMODB_TABLE_NAME!;
 const MODERATION_HANDLER_FUNCTION_NAME = process.env.MODERATION_HANDLER_FUNCTION_NAME!;
 
 const MAX_BYTES = 5 * 1024 * 1024;
-const MIN_DIMENSION = 600;
+const MIN_LONG_EDGE = 400;
+const MIN_SHORT_EDGE = 150;
 const MAX_DIMENSION = 4096;
 
 // sharp's detected format is the magic-bytes ground truth; the extension is
@@ -154,8 +155,14 @@ export const handler: S3Handler = async (event) => {
       }
 
       const { width = 0, height = 0 } = metadata;
-      if (width < MIN_DIMENSION || height < MIN_DIMENSION) {
-        await reject(key, pendingId, `image too small: ${width}x${height} (min ${MIN_DIMENSION}px)`);
+      const longEdge = Math.max(width, height);
+      const shortEdge = Math.min(width, height);
+      if (longEdge < MIN_LONG_EDGE) {
+        await reject(key, pendingId, `image too small: ${width}x${height} (long edge min ${MIN_LONG_EDGE}px)`);
+        continue;
+      }
+      if (shortEdge < MIN_SHORT_EDGE) {
+        await reject(key, pendingId, `image too small: ${width}x${height} (short edge min ${MIN_SHORT_EDGE}px)`);
         continue;
       }
       if (width > MAX_DIMENSION || height > MAX_DIMENSION) {

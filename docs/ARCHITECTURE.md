@@ -288,7 +288,8 @@ as a description of current behavior.
    - rejects files over 5 MB;
    - sniffs the real format with sharp and rejects a mismatch against the
      claimed extension (disguised file);
-   - rejects images outside 600 to 4096 px on either axis;
+   - rejects images whose long edge is under 400px or short edge is under
+     150px, or whose long edge exceeds 4096px;
    - strips EXIF by re-encoding with sharp and writes the cleaned file back
      to the same key with object metadata `validated=true`, which is also the
      guard against the resulting `OBJECT_CREATED` re-triggering this Lambda;
