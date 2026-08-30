@@ -229,7 +229,7 @@ export function PostMemeModal({ onClose }: Props) {
   const stepLabel =
     step === "uploading" ? "Uploading image…" :
     step === "validating" ? "Validating image…" :
-    step === "minting" ? "Minting NFT on Solana… (approve in Phantom)" :
+    step === "minting" ? "Minting NFT on Solana… (approve in wallet)" :
     "Creating on Bags & posting…";
 
   return (
