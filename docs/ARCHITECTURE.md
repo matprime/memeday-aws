@@ -155,9 +155,12 @@ touched by TTL.
   calling code short-circuits on, with `SOLANA_DISABLED_MESSAGE` for the UI.
 
 #### What is live vs mocked
-- NFT mints: LIVE, `lib/nft.ts`, Metaplex Token Metadata (classic
-  NonFungible) via umi `createNft`. `sellerFeeBasisPoints` 2.5%,
-  `isMutable: false`, symbol `MDAY`. Signed client-side by the user's wallet.
+- NFT mints: LIVE, `lib/nft.ts`, Metaplex Core (`mpl-core`) via umi `create`.
+  Single asset account (no SPL mint/ATA/metadata/edition accounts), so mint
+  rent is a fraction of classic Token Metadata. Royalties plugin at 250 bps
+  (100% to the minting wallet), `ImmutableMetadata` plugin in place of the
+  old `isMutable: false`. No on-chain `symbol` field in Core; `MDAY` is no
+  longer set anywhere. Signed client-side by the user's wallet.
 - Solana Pay tips: LIVE, `lib/solana/tip.ts`.
 - Bags.fm: MOCKED (`lib/bags.ts`, simulated delays, no network calls).
   Mainnet, post-deadline only. The single simulated link in the diagram.

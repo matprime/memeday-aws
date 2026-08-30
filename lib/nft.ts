@@ -2,11 +2,8 @@ import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import {
   walletAdapterIdentity,
 } from "@metaplex-foundation/umi-signer-wallet-adapters";
-import {
-  createNft,
-  mplTokenMetadata,
-} from "@metaplex-foundation/mpl-token-metadata";
-import { base58, generateSigner, percentAmount } from "@metaplex-foundation/umi";
+import { create, mplCore, ruleSet } from "@metaplex-foundation/mpl-core";
+import { base58, generateSigner, publicKey } from "@metaplex-foundation/umi";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Connection } from "@solana/web3.js";
 import { pollSignatureConfirmation } from "@/lib/solana/confirm";
@@ -66,7 +63,7 @@ export async function mintMemeNft(
   const metadataUri = await registerMetadataUri(imageUrl, caption);
 
   const umi = createUmi(rpcUrl)
-    .use(mplTokenMetadata())
+    .use(mplCore())
     .use(walletAdapterIdentity(wallet as any));
 
   // umi's confirmTransaction delegates to web3.js Connection.confirmTransaction,
@@ -86,15 +83,21 @@ export async function mintMemeNft(
     };
   };
 
-  const mint = generateSigner(umi);
+  const asset = generateSigner(umi);
   try {
-    await createNft(umi, {
-      mint,
+    await create(umi, {
+      asset,
       name: caption.slice(0, 32),
-      symbol: "MDAY",
       uri: metadataUri,
-      sellerFeeBasisPoints: percentAmount(2.5),
-      isMutable: false,
+      plugins: [
+        {
+          type: "Royalties",
+          basisPoints: 250,
+          creators: [{ address: publicKey(wallet.publicKey.toBase58()), percentage: 100 }],
+          ruleSet: ruleSet("None"),
+        },
+        { type: "ImmutableMetadata" },
+      ],
     }).sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
   } catch (err) {
     if (err instanceof TypeError && err.message === "Failed to fetch") {
@@ -105,5 +108,5 @@ export async function mintMemeNft(
     throw err;
   }
 
-  return mint.publicKey.toString();
+  return asset.publicKey.toString();
 }
