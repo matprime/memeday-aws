@@ -20,7 +20,7 @@ export function PostMemeModal({ onClose }: Props) {
   const { rpcUrl, enabled, disabledMessage } = useSolanaConfig();
   const wallet = useWallet();
   const { publicKey } = wallet;
-  const { cognitoToken, authMethod, addToast } = useAppStore();
+  const { cognitoToken, addToast } = useAppStore();
 
   const [caption, setCaption] = useState("");
   const [isNFT, setIsNFT] = useState(false);
@@ -147,7 +147,7 @@ export function PostMemeModal({ onClose }: Props) {
       if (isNFT) {
         if (!enabled) {
           addToast(disabledMessage, "error");
-        } else if (authMethod !== "wallet") {
+        } else if (!publicKey) {
           addToast("NFT minting is only available for wallet-connected users.", "error");
         } else {
           setStep("minting");
@@ -314,7 +314,7 @@ export function PostMemeModal({ onClose }: Props) {
                   addToast(disabledMessage, "error");
                   return;
                 }
-                if (authMethod !== "wallet" && !isNFT) {
+                if (!publicKey && !isNFT) {
                   addToast("NFT minting is only available for wallet-connected users.", "error");
                   return;
                 }
@@ -342,7 +342,7 @@ export function PostMemeModal({ onClose }: Props) {
             </div>
           )}
 
-          {authMethod === "email" && (
+          {!publicKey && (
             <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-xl p-4">
               <div className="flex items-center gap-2">
                 <Zap size={16} className="text-yellow-500" />
