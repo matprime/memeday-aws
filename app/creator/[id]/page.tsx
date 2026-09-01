@@ -105,7 +105,7 @@ export default async function CreatorPage(props: Props) {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {memes.map((m) => (
-            <MemeCard key={m.id} meme={m} />
+            <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
           ))}
         </div>
       )}
