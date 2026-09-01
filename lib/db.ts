@@ -10,7 +10,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
-import type { DbComment, DbMeme, DbPendingUpload, DbUser, OpenReport } from "./types";
+import type { DbBagsToken, DbComment, DbMeme, DbPendingUpload, DbUser, OpenReport } from "./types";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -61,6 +61,17 @@ function parseComment(item: Record<string, unknown>): DbComment {
     walletAddr: item.walletAddr as string | undefined,
     body: item.body as string,
     createdAt: item.createdAt as string,
+  };
+}
+
+function parseBagsToken(item: Record<string, unknown>): DbBagsToken {
+  return {
+    creatorId: item.creatorId as string,
+    tokenMint: item.tokenMint as string,
+    symbol: item.symbol as string,
+    name: item.name as string,
+    partnerAttributed: (item.partnerAttributed as boolean) ?? false,
+    verifiedAt: item.verifiedAt as string,
   };
 }
 
@@ -694,4 +705,52 @@ export async function dismissReport(memeId: string): Promise<void> {
       Key: { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${memeId}` },
     })
   );
+}
+
+// Overwrites on a repeat verify of the same mint (fresh verifiedAt/
+// partnerAttributed) rather than rejecting — re-verifying isn't an error, and
+// there is nothing here a second write would corrupt.
+export async function createVerifiedBagsToken(token: {
+  creatorId: string;
+  tokenMint: string;
+  symbol: string;
+  name: string;
+  partnerAttributed: boolean;
+}): Promise<DbBagsToken> {
+  const item: Record<string, unknown> = {
+    PK: `USER#${token.creatorId}`,
+    SK: `TOKEN#${token.tokenMint}`,
+    creatorId: token.creatorId,
+    tokenMint: token.tokenMint,
+    symbol: token.symbol,
+    name: token.name,
+    partnerAttributed: token.partnerAttributed,
+    verifiedAt: new Date().toISOString(),
+  };
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
+  return parseBagsToken(item);
+}
+
+// Shares the User row's PK by design (see DbBagsToken) — this Query only ever
+// sees the TOKEN# items in that collection, never the USER# item itself.
+export async function getVerifiedBagsTokensByCreator(creatorId: string): Promise<DbBagsToken[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+      ExpressionAttributeValues: { ":pk": `USER#${creatorId}`, ":prefix": "TOKEN#" },
+    })
+  );
+  return (result.Items ?? []).map((item) => parseBagsToken(item as Record<string, unknown>));
+}
+
+// Single "does this creator have a token" read, shared by the profile page
+// and the claim UI's launch-button-vs-card decision (KAN-29 follow-up), so
+// both always agree on which one counts when a creator has claimed more than
+// one launch: the most recently verified.
+export async function getVerifiedBagsToken(creatorId: string): Promise<DbBagsToken | null> {
+  const tokens = await getVerifiedBagsTokensByCreator(creatorId);
+  if (tokens.length === 0) return null;
+  return tokens.reduce((latest, t) => (t.verifiedAt > latest.verifiedAt ? t : latest));
 }

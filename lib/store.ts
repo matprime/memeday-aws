@@ -55,11 +55,6 @@ interface AppState {
   reportedMemes: Set<string>;
   hydrateReportedMemes: (userId: string | null, memeIds: string[]) => Promise<void>;
   reportOnMeme: (userId: string | null, memeId: string) => void;
-
-  // Creator project state (per session)
-  myBagsProjectId: string | null;
-  myTokenSymbol: string | null;
-  setMyBagsProject: (projectId: string, tokenSymbol: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -170,11 +165,6 @@ export const useAppStore = create<AppState>()(
       }
       return { reportedMemes: next };
     }),
-
-  myBagsProjectId: null,
-  myTokenSymbol: null,
-  setMyBagsProject: (projectId, tokenSymbol) =>
-    set({ myBagsProjectId: projectId, myTokenSymbol: tokenSymbol }),
     }),
     {
       name: "memeday-auth",
