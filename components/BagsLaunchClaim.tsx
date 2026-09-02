@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { Zap, ExternalLink, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
@@ -25,6 +26,7 @@ interface TokenSummary {
 // server-side, this component just renders whichever they hand back.
 export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
   const { addToast } = useAppStore();
+  const { publicKey } = useWallet();
 
   // Whether the caller already has a verified token drives launch-button vs
   // card (correction 3). null = still checking.
@@ -104,6 +106,14 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
         // Mock path: no bags.fm tab, no Bags API call. Goes straight to a
         // simulated verify result so the flow stays reviewable on Preview.
         await verify(undefined);
+        return;
+      }
+
+      // MemeDay cannot verify a launch without a linked wallet, so sending a
+      // wallet-less user to bags.fm means they spend real SOL on a token
+      // they can never claim.
+      if (!publicKey) {
+        addToast("Connect a wallet before launching on Bags.", "error");
         return;
       }
 
