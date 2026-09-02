@@ -1,40 +1,23 @@
 "use client";
 
 /**
- * Bags SDK Integration
- * Bags is a Solana-native creator economy platform.
- * Each creator gets a Project + fungible Creator Token.
+ * Bags.fm integration (KAN-29).
  *
- * In production: replace simulated calls with the real Bags SDK.
- * Endpoint: https://bags.fm/api  (or use npm i @bags/sdk when available)
+ * Token launch is a link-out to Bags, not an in-app action: MemeDay never
+ * signs a launch transaction. This file holds only the pieces that are safe
+ * to run on either side of the network boundary (no secrets). The server-only
+ * API client (x-api-key, verification calls) lives in lib/bags-server.ts and
+ * must never be imported from a "use client" file.
+ *
+ * buyCreatorToken / sellCreatorToken / getBagsTokenPrice below are unrelated,
+ * pre-existing simulated in-app trading (KAN-52) and are untouched by KAN-29.
  */
 
-import { BagsEvent } from "./types";
-
-const BAGS_API_BASE = "https://bags.fm/api";
+import type { BagsEvent } from "./types";
 
 // Simulated delay to mimic real network calls
 const delay = (ms: number) =>
   new Promise<void>((res) => setTimeout(res, ms));
-
-/** Generates a pseudo project ID for demo purposes */
-const genProjectId = (wallet: string) =>
-  `bags-${wallet.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
-
-export interface BagsProject {
-  projectId: string;
-  walletAddress: string;
-  name: string;
-  createdAt: string;
-}
-
-export interface BagsToken {
-  symbol: string;
-  name: string;
-  projectId: string;
-  mintAddress: string;
-  initialPrice: number;
-}
 
 export interface BagsPurchaseResult {
   txSignature: string;
@@ -43,47 +26,69 @@ export interface BagsPurchaseResult {
   newPrice: number;
 }
 
-/**
- * Create a Bags project for a creator.
- * One project per wallet — idempotent.
- */
-export async function createBagsProject(
-  walletAddress: string,
-  creatorName: string
-): Promise<BagsProject> {
-  // Production: POST /api/projects with signed transaction
-  await delay(1200);
-  const project: BagsProject = {
-    projectId: genProjectId(walletAddress),
-    walletAddress,
-    name: creatorName,
-    createdAt: new Date().toISOString(),
-  };
-  return project;
+const LAUNCH_INTENT_BASE = "https://bags.fm/launch?intent=true";
+const MAX_NAME_LENGTH = 32;
+const MAX_TICKER_LENGTH = 10;
+
+export class BagsLaunchConfigError extends Error {}
+
+export interface BagsLaunchIntentParams {
+  name: string;
+  ticker: string;
+  description?: string;
+  image?: string;
+  website?: string;
+  twitter?: string;
+  partner?: string;
+  partnerConfig?: string;
 }
 
-/**
- * Create a fungible creator token inside a Bags project.
- * Launches a bonding-curve token on Solana.
- */
-export async function createBagsToken(
-  projectId: string,
-  name: string,
-  symbol: string,
-  _imageUrl?: string
-): Promise<BagsToken> {
-  // Production: POST /api/tokens with token metadata
-  await delay(1500);
-  const token: BagsToken = {
-    symbol: symbol.toUpperCase().slice(0, 6),
-    name,
-    projectId,
-    mintAddress: `${symbol.toLowerCase()}mint${Math.random()
-      .toString(36)
-      .slice(2, 10)}`,
-    initialPrice: 0.001,
-  };
-  return token;
+// Pure and secret-free: everything it needs comes in as arguments, so it can
+// run in a client component (building the URL to open) or in a route handler
+// (validating what a client sent) without caring which side it's on.
+//
+// partner and partnerConfig are a matched pair that Bags drops silently
+// (only a toast on their side) if either is malformed — refuse to build the
+// URL rather than open a launch flow that silently loses our attribution.
+// feeMode is deliberately never set: Bags can silently drop every fee-sharing
+// param when it's present.
+export function buildBagsLaunchIntentUrl(params: BagsLaunchIntentParams): string {
+  const { partner, partnerConfig } = params;
+  if (!partner || !partnerConfig) {
+    throw new BagsLaunchConfigError(
+      "Bags partner pair (partner + partnerConfig) is missing"
+    );
+  }
+
+  const name = params.name.trim().slice(0, MAX_NAME_LENGTH);
+  // Bags tickers are alphanumeric only; strip anything else rather than
+  // reject, since stray punctuation in a pasted caption is common and not
+  // worth blocking a launch over.
+  const ticker = params.ticker
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, MAX_TICKER_LENGTH);
+  if (!name || !ticker) {
+    throw new BagsLaunchConfigError("name and ticker are required");
+  }
+
+  const query = new URLSearchParams({ name, ticker, partner, partnerConfig });
+  if (params.description) query.set("description", params.description);
+  if (params.image) query.set("image", params.image);
+  if (params.website) query.set("website", params.website);
+  if (params.twitter) query.set("twitter", params.twitter);
+
+  return `${LAUNCH_INTENT_BASE}&${query.toString()}`;
+}
+
+// Base58, no 0/O/I/l. Solana addresses are 32-44 chars in that alphabet.
+// Deliberately loose (format only, not a real on-curve check) — it exists to
+// reject obvious junk before spending a Bags API call, not to fully validate.
+const BASE58_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+export function isPlausibleSolanaAddress(value: string): boolean {
+  return BASE58_ADDRESS_RE.test(value.trim());
 }
 
 /**

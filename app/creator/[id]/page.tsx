@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getUserById, getMemesByCreator } from "@/lib/db";
+import { getUserById, getMemesByCreator, getVerifiedBagsToken } from "@/lib/db";
 import { MOCK_CREATORS } from "@/lib/data";
 import { MemeCard } from "@/components/MemeCard";
+import { BagsTokenCard } from "@/components/BagsTokenCard";
 import { ImageIcon, Zap, BarChart3 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -15,9 +16,10 @@ interface Props {
 export default async function CreatorPage(props: Props) {
   const params = await props.params;
   const userId = decodeURIComponent(params.id);
-  const [user, memes] = await Promise.all([
+  const [user, memes, bagsToken] = await Promise.all([
     getUserById(userId),
     getMemesByCreator(userId),
+    getVerifiedBagsToken(userId),
   ]);
 
   const demoCreator = MOCK_CREATORS.find((c) => c.id === userId);
@@ -87,6 +89,12 @@ export default async function CreatorPage(props: Props) {
         </div>
       </div>
 
+      {bagsToken && (
+        <div className="mb-8">
+          <BagsTokenCard name={bagsToken.name} symbol={bagsToken.symbol} tokenMint={bagsToken.tokenMint} />
+        </div>
+      )}
+
       <div className="flex items-center gap-2 mb-4">
         <ImageIcon size={18} className="text-accent-light" />
         <h2 className="text-xl font-black text-white">Memes by {username}</h2>
@@ -97,7 +105,7 @@ export default async function CreatorPage(props: Props) {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {memes.map((m) => (
-            <MemeCard key={m.id} meme={m} />
+            <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
           ))}
         </div>
       )}
