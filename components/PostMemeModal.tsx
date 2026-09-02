@@ -10,6 +10,7 @@ import { mintMemeNft } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
 import { BagsLaunchClaim } from "@/components/BagsLaunchClaim";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 interface Props {
   onClose: () => void;
@@ -32,6 +33,9 @@ export function PostMemeModal({ onClose }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [postedMeme, setPostedMeme] = useState<{ imageUrl: string; caption: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Holds user input, so backdrop click never dismisses it (KAN-74) — X only.
+  useDialogDismiss({ onClose, closeOnBackdrop: false });
 
   useEffect(() => {
     if (!selectedImage) { setImagePreviewUrl(""); return; }
@@ -214,10 +218,7 @@ export function PostMemeModal({ onClose }: Props) {
     "Posting…";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div className="bg-surface border border-border rounded-2xl w-full max-w-lg animate-slide-up shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-surface z-10">
           <h2 className="font-bold text-white text-lg">Post a Meme</h2>
