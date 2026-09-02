@@ -62,6 +62,7 @@ export interface DbUser {
   userId: string;           // Cognito sub — primary identity
   email?: string;
   walletAddr?: string;      // Solana public key (linked after signup)
+  walletVerifiedAt?: string; // set only after a real signature/token check (KAN-75); absent means walletAddr is unverified
   displayName?: string;
   authMethods: string[];    // e.g. ["email"] | ["wallet"] | ["email","wallet"]
   bagsProjectId?: string;

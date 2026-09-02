@@ -21,6 +21,8 @@ export async function POST(req: Request) {
       userId,
       email,
       walletAddr,
+      // Present only when it came off the token, so this is always proven.
+      walletVerified: walletAddr !== undefined,
       displayName,
       authMethods,
       bagsProjectId,

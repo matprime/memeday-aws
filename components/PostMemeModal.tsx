@@ -179,7 +179,11 @@ export function PostMemeModal({ onClose }: Props) {
       });
       const { user: currentUser } = userRes.ok ? await userRes.json() : { user: null };
 
-      if (authMethod === "email" && publicKey && signMessage && !currentUser?.walletAddr) {
+      // Gates on walletVerifiedAt, not walletAddr (KAN-75 follow-up): a row
+      // with walletAddr set but no verification stamp is a pre-KAN-75
+      // unverified value, and this is the organic re-link point for it, same
+      // as this flow already is for a never-linked account.
+      if (authMethod === "email" && publicKey && signMessage && !currentUser?.walletVerifiedAt) {
         try {
           const nonceRes = await fetch("/api/auth/wallet/nonce", {
             method: "POST",

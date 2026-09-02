@@ -10,6 +10,7 @@ import {
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 import { setRefreshCookie } from "@/lib/auth-cookie";
 import { verifyChallenge, verifySolanaSignature } from "@/lib/wallet-signature";
+import { upsertUser } from "@/lib/db";
 
 function cognitoClient() {
   return new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
@@ -19,6 +20,16 @@ function getEnv(key: string): string {
   const v = process.env[key];
   if (!v) throw new Error(`${key} not set`);
   return v;
+}
+
+// Reads sub out of the access token this request just minted via
+// AdminInitiateAuthCommand. Not a signature check: we trust it because we
+// issued it ourselves moments earlier in this same request, the same way
+// lib/store.ts's client-side decodeJwtSub trusts a token already accepted
+// elsewhere.
+function decodeSub(accessToken: string): string {
+  const payload = accessToken.split(".")[1];
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")).sub;
 }
 
 // Derive a deterministic server-side password for wallet users so we can use
@@ -104,6 +115,18 @@ export async function POST(req: NextRequest) {
     const tokens = result.AuthenticationResult;
     if (!tokens?.AccessToken) {
       return NextResponse.json({ error: "Auth failed — no token returned" }, { status: 500 });
+    }
+
+    // Re-links and re-proves the address on every successful wallet login
+    // (KAN-75), since reaching this line already means verifyChallenge and
+    // verifySolanaSignature both passed. Wrapped so a DynamoDB hiccup never
+    // blocks a login the Cognito side already granted; the same stamp also
+    // happens lazily on the next POST /api/users call from this session, so
+    // a failure here is not the only chance to catch up.
+    try {
+      await upsertUser({ userId: decodeSub(tokens.AccessToken), walletAddr: walletAddress, walletVerified: true });
+    } catch (err) {
+      console.error("Failed to stamp walletVerifiedAt on wallet login:", err);
     }
 
     const res = NextResponse.json({

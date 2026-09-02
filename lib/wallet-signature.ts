@@ -1,4 +1,5 @@
 import { createHmac, createPublicKey, verify as cryptoVerify } from "crypto";
+import bs58 from "bs58";
 
 const DER_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const NONCE_TTL_MS = 5 * 60 * 1000;
@@ -57,7 +58,6 @@ function offchainEnvelopes(msg: Buffer, pubkeyRaw: Buffer): Buffer[] {
 export function verifySolanaSignature(message: string, signatureB64: string, walletAddress: string): boolean {
   try {
     // bs58 decode the Solana public key (32 bytes) then wrap in ed25519 DER
-    const bs58 = require("bs58").default ?? require("bs58");
     const pubkeyRaw = Buffer.from(bs58.decode(walletAddress));
     const derKey = Buffer.concat([DER_PREFIX, pubkeyRaw]);
     const pubkey = createPublicKey({ key: derKey, format: "der", type: "spki" });

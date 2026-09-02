@@ -160,27 +160,6 @@ test("POST /api/users/wallet: a valid challenge and signature link the wallet", 
     const challenge = await requestChallenge(postNonce, wallet.walletAddress, ip);
     const signature = signChallenge(wallet.privateKey, challenge);
 
-    // Pre-flight: confirm this process can actually verify a real signature at
-    // all before asserting on it. Node's native TypeScript loader has a known
-    // gap (unrelated to this ticket, reproduces identically on the unmodified
-    // pre-KAN-75 route) where lib/wallet-signature.ts's dynamic
-    // require("bs58") inside verifySolanaSignature throws ReferenceError when
-    // this file is loaded as a plain script rather than via `node -e`, and
-    // that throw is swallowed by the function's own try/catch, so it silently
-    // returns false for every input. This never affects the real app — Next.js
-    // compiles the file with webpack/SWC, not Node's native loader — but it
-    // means no test/*.test.js file in this repo can currently exercise a
-    // genuinely successful wallet signature. Skip rather than assert a false
-    // positive; see the KAN-75 summary for the full writeup.
-    const { verifyChallenge: preflightVerifyChallenge, verifySolanaSignature: preflightVerifySignature } =
-      await load("lib/wallet-signature.ts");
-    if (!preflightVerifyChallenge(challenge, wallet.walletAddress) || !preflightVerifySignature(challenge, signature, wallet.walletAddress)) {
-      t.skip(
-        "This process cannot verify a real signature (Node native .ts loader gap, not a code bug — see comment above)"
-      );
-      return;
-    }
-
     const res = await postLink(
       new Request("http://x/api/users/wallet", {
         method: "POST",

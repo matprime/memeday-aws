@@ -48,6 +48,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Signature verification failed" }, { status: 401 });
   }
 
-  const user = await upsertUser({ userId, walletAddr: walletAddress });
+  // Reached only after both checks above pass, so this address is proven.
+  const user = await upsertUser({ userId, walletAddr: walletAddress, walletVerified: true });
   return NextResponse.json({ user });
 }
