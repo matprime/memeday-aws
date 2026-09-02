@@ -20,8 +20,8 @@ export function PostMemeModal({ onClose }: Props) {
   const router = useRouter();
   const { rpcUrl, enabled, disabledMessage } = useSolanaConfig();
   const wallet = useWallet();
-  const { publicKey } = wallet;
-  const { cognitoToken, addToast } = useAppStore();
+  const { publicKey, signMessage } = wallet;
+  const { cognitoToken, authMethod, addToast } = useAppStore();
 
   const [caption, setCaption] = useState("");
   const [isNFT, setIsNFT] = useState(false);
@@ -164,18 +164,47 @@ export function PostMemeModal({ onClose }: Props) {
         }
       }
 
-      // 3. Upsert user record
+      // 3. Upsert user record. A wallet-authenticated caller already has a
+      // proven address on the token (KAN-75); the server derives it there.
+      // An email-signup caller with a wallet connected but no linked address
+      // proves ownership once, here, before the meme is saved.
       setStep("posting");
-      await fetch("/api/users", {
+      const userRes = await fetch("/api/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${await requireToken()}`,
         },
-        body: JSON.stringify({
-          walletAddr: walletAddress || undefined,
-        }),
+        body: JSON.stringify({}),
       });
+      const { user: currentUser } = userRes.ok ? await userRes.json() : { user: null };
+
+      if (authMethod === "email" && publicKey && signMessage && !currentUser?.walletAddr) {
+        try {
+          const nonceRes = await fetch("/api/auth/wallet/nonce", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress }),
+          });
+          if (nonceRes.ok) {
+            const { challenge } = await nonceRes.json();
+            const sigBytes = await signMessage(new TextEncoder().encode(challenge));
+            const signature = Buffer.from(sigBytes).toString("base64");
+            await fetch("/api/users/wallet", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${await requireToken()}`,
+              },
+              body: JSON.stringify({ walletAddress, challenge, signature }),
+            });
+          }
+        } catch {
+          // Declining the signature prompt (or a transient failure) must not
+          // block posting the meme — tipping just stays unavailable until
+          // the next post.
+        }
+      }
 
       // 4. Save meme to DB
       const res = await fetch("/api/memes", {
@@ -242,7 +271,9 @@ export function PostMemeModal({ onClose }: Props) {
                 alt="Posted meme"
                 className="mx-auto max-h-40 w-auto rounded-lg object-contain"
               />
-              <BagsLaunchClaim imageUrl={postedMeme.imageUrl} defaultName={postedMeme.caption} />
+              {authMethod === "wallet" && (
+                <BagsLaunchClaim imageUrl={postedMeme.imageUrl} defaultName={postedMeme.caption} />
+              )}
             </div>
             <div className="p-5 pt-0">
               <button

@@ -96,9 +96,20 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
     if (!ticker.trim() || !name.trim() || launching) return;
     setLaunching(true);
     try {
-      const configRes = await fetch("/api/bags/launch-config");
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error("Session expired — sign in again");
+
+      const configRes = await fetch("/api/bags/launch-config", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (!configRes.ok) throw new Error("Could not reach MemeDay");
       const config = await configRes.json();
+
+      // Wallet-only gate (KAN-75): checked before either branch below, so it
+      // applies in simulated mode too, not just the live bags.fm link-out.
+      if (!config.walletAuthed) {
+        throw new Error("Connect and verify a wallet to launch a Bags token");
+      }
 
       if (!config.live) {
         // Mock path: no bags.fm tab, no Bags API call. Goes straight to a
@@ -154,29 +165,47 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
         </p>
 
         <div className="space-y-2 mb-3">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value.slice(0, 32))}
-            placeholder="Token name"
-            maxLength={32}
-            className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-          />
-          <input
-            type="text"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
-            placeholder="Ticker (2-10 chars, e.g. MLRD)"
-            maxLength={10}
-            className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-          />
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
-            className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-          />
+          <div>
+            <label htmlFor="bags-token-name" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Token name
+            </label>
+            <input
+              id="bags-token-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value.slice(0, 32))}
+              placeholder="Token name"
+              maxLength={32}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
+          <div>
+            <label htmlFor="bags-token-ticker" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Ticker
+            </label>
+            <input
+              id="bags-token-ticker"
+              type="text"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
+              placeholder="Ticker (2-10 chars, e.g. MLRD)"
+              maxLength={10}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
+          <div>
+            <label htmlFor="bags-token-description" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Description
+            </label>
+            <input
+              id="bags-token-description"
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
         </div>
 
         {/* Required disclosure, shown before the user can leave for bags.fm. The
