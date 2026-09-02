@@ -107,6 +107,18 @@ export interface DbComment {
   createdAt: string;
 }
 
+// Creator's Bags launch, once claimed and server-verified (KAN-29). Stored at
+// PK = USER#<creatorId>, SK = TOKEN#<tokenMint> — same item collection as the
+// User row, so a profile page read can pull both in one Query.
+export interface DbBagsToken {
+  creatorId: string;
+  tokenMint: string;
+  symbol: string;             // as supplied by the creator at claim time, not independently verified against Bags
+  name: string;                // same caveat as symbol
+  partnerAttributed: boolean; // verified server-side via GET /token-launch accountKeys
+  verifiedAt: string;
+}
+
 export interface OpenReport {
   memeId: string;
   s3Key: string;

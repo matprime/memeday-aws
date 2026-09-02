@@ -48,6 +48,12 @@ export const RATE_LIMITS = {
   // caller is authenticated.
   reportPerUser: { key: "reportPerUser", max: 10, windowSeconds: DAY },
   reportPerIp: { key: "reportPerIp", max: 20, windowSeconds: DAY },
+
+  // ── Bags launch verification (KAN-29) ───────────────────────────────────
+  // Read-only against Bags and writes one DynamoDB item, so this guards
+  // against someone hammering the Bags API through us, not a spend budget.
+  bagsVerifyPerUser: { key: "bagsVerifyPerUser", max: 10, windowSeconds: DAY },
+  bagsVerifyPerIp: { key: "bagsVerifyPerIp", max: 20, windowSeconds: DAY },
 } as const satisfies Record<string, RateLimitDef>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
