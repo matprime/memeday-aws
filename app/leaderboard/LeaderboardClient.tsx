@@ -34,9 +34,9 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
   const top3 = creatorsByVolume.slice(0, 3);
   const selectedMemes: DisplayMeme[] = selectedCreator ? (memesMap[selectedCreator.id] ?? []) : [];
 
-  const { handleBackdropClick } = useDialogDismiss({
+  useDialogDismiss({
     onClose: () => setSelectedCreator(null),
-    closeOnBackdrop: true,
+    closeOnBackdrop: false,
     enabled: !!selectedCreator,
   });
 
@@ -226,7 +226,6 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
       {selectedCreator && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-          onClick={handleBackdropClick}
         >
           <div
             className="bg-surface border border-border rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col"

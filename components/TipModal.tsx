@@ -51,7 +51,7 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
   const { publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
 
-  const { handleBackdropClick } = useDialogDismiss({ onClose, closeOnBackdrop: true });
+  useDialogDismiss({ onClose, closeOnBackdrop: false });
 
   const amountCheck = validateAmount(amount);
   const isValid = amountCheck.level !== "block";
@@ -158,7 +158,6 @@ export function TipModal({ creatorWallet, memeId, memeCaption, onClose }: Props)
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={handleBackdropClick}
     >
       <div className="bg-surface border border-border rounded-2xl w-full max-w-sm animate-slide-up shadow-2xl">
         <div className="flex items-center justify-between p-5 border-b border-border">
