@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Send, MessageSquare, Facebook, Link2, Share2 } from "lucide-react";
 import { EVENTS, track } from "@/lib/analytics";
 import { useAppStore } from "@/lib/store";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 interface Props {
   memeId: string;
@@ -34,6 +35,12 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
   const [open, setOpen] = useState(false);
   const [canNativeShare, setCanNativeShare] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  useDialogDismiss({
+    onClose: () => setOpen(false),
+    closeOnBackdrop: false,
+    enabled: open,
+  });
 
   useEffect(() => {
     // Feature-detect + pointer check, not just navigator.share: some desktop
@@ -109,7 +116,6 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-          onClick={(e) => e.target === e.currentTarget && setOpen(false)}
         >
           <div className="bg-surface border border-border rounded-2xl w-full max-w-sm animate-slide-up shadow-2xl">
             <div className="flex items-center justify-between p-5 border-b border-border">
