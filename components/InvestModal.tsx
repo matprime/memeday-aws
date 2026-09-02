@@ -9,6 +9,7 @@ import { buyCreatorToken, sellCreatorToken } from "@/lib/bags";
 import { useAppStore } from "@/lib/store";
 import { CreatorAvatar } from "./CreatorAvatar";
 import { useSolanaConfig } from "./WalletProvider";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 interface Props {
   creator: Creator;
@@ -27,6 +28,9 @@ export function InvestModal({ creator, onClose }: Props) {
   const [solAmount, setSolAmount] = useState("0.1");
   const [tokenAmount, setTokenAmount] = useState("100");
   const [loading, setLoading] = useState(false);
+
+  // Holds user input, so backdrop click never dismisses it (KAN-74) — X only.
+  useDialogDismiss({ onClose, closeOnBackdrop: false });
 
   const estimatedTokens = Math.floor(
     (parseFloat(solAmount) || 0) / creator.token.price
@@ -106,10 +110,7 @@ export function InvestModal({ creator, onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div className="bg-surface border border-border rounded-2xl w-full max-w-md animate-slide-up shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">

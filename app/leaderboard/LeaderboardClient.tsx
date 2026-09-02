@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 type DisplayMeme = { id: string; imageUrl: string; caption: string; isNFT: boolean };
 
@@ -32,6 +33,12 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
 
   const top3 = creatorsByVolume.slice(0, 3);
   const selectedMemes: DisplayMeme[] = selectedCreator ? (memesMap[selectedCreator.id] ?? []) : [];
+
+  const { handleBackdropClick } = useDialogDismiss({
+    onClose: () => setSelectedCreator(null),
+    closeOnBackdrop: true,
+    enabled: !!selectedCreator,
+  });
 
   return (
     <>
@@ -219,7 +226,7 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
       {selectedCreator && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-          onClick={() => setSelectedCreator(null)}
+          onClick={handleBackdropClick}
         >
           <div
             className="bg-surface border border-border rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col"
