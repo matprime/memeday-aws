@@ -297,11 +297,33 @@ export class MemeDayStack extends cdk.Stack {
     );
     s3Handler.addEnvironment("MODERATION_HANDLER_FUNCTION_NAME", moderationHandler.functionName);
 
+    // KAN-77: Bags.fm fetches the meme image client-side to hydrate its launch
+    // intent form, and a browser blocks that read without CORS headers. A
+    // wildcard origin is safe here because uploads/* is public meme media
+    // served with no cookies and no Authorization header, CORS is a browser
+    // read rule and not access control, and a named-origin allowlist would
+    // force Origin into the cache key for no security gain.
+    //
+    // This attaches to the distribution default behavior, so every path this
+    // distribution serves inherits it. Today that is only public media under
+    // uploads/. KAN-10 proposes putting NFT metadata behind the same
+    // distribution and should treat this inheritance as a deliberate decision.
+    const corsResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, "MemeDayCorsResponseHeadersPolicy", {
+      corsBehavior: {
+        accessControlAllowOrigins: ["*"],
+        accessControlAllowMethods: ["GET", "HEAD"],
+        accessControlAllowHeaders: ["*"],
+        accessControlAllowCredentials: false,
+        originOverride: true,
+      },
+    });
+
     // --- CloudFront: only public path to the media bucket (OAC, no public bucket policy) ---
     const distribution = new cloudfront.Distribution(this, "MemeDayDistribution", {
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        responseHeadersPolicy: corsResponseHeadersPolicy,
       },
     });
 
