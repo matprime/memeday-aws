@@ -5,11 +5,15 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { Zap, ExternalLink, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
-import { buildBagsLaunchIntentUrl, BagsLaunchConfigError } from "@/lib/bags";
+import { buildBagsLaunchIntentUrl, extractBagsTokenMint, BagsLaunchConfigError } from "@/lib/bags";
 import { BagsTokenCard } from "@/components/BagsTokenCard";
 
 interface Props {
-  imageUrl: string;
+  // Absent = claim-only mode (KAN-79): no meme was just posted, so there is
+  // nothing to launch from here. Used by BagsProfileClaim to offer the
+  // paste-the-mint recovery panel from a profile page instead of only from
+  // the post-meme success screen.
+  imageUrl?: string;
   defaultName: string;
 }
 
@@ -27,6 +31,7 @@ interface TokenSummary {
 export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
   const { addToast } = useAppStore();
   const { publicKey } = useWallet();
+  const claimOnly = !imageUrl;
 
   // Whether the caller already has a verified token drives launch-button vs
   // card (correction 3). null = still checking.
@@ -94,6 +99,17 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
     }
   };
 
+  // Runs a pasted mint or bags.fm link through extractBagsTokenMint before
+  // ever calling verify, in both launch and claim-only mode (KAN-79).
+  const handleVerifyMint = () => {
+    const mint = extractBagsTokenMint(mintAddress);
+    if (!mint) {
+      setVerifyError("That doesn't look like a valid mint address or bags.fm link.");
+      return;
+    }
+    verify(mint);
+  };
+
   const handleLaunch = async () => {
     if (!ticker.trim() || !name.trim() || launching) return;
     setLaunching(true);
@@ -153,17 +169,11 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Zap size={16} className="text-bags" />
-          <p className="text-sm font-bold text-bags">Launch a Creator Token on Bags</p>
-        </div>
-        <p className="text-xs text-gray-400 mb-3">
-          Opens bags.fm in a new tab with your meme&apos;s image and details prefilled. You
-          connect and sign on Bags — MemeDay never holds your keys or signs anything here.
-        </p>
-
-        <div className="space-y-2 mb-3">
+      {claimOnly ? (
+        // Claim-only mode (KAN-79): no launch button, no launch disclosure —
+        // there is no meme image to launch from here. Name/ticker stay
+        // because POST /api/bags/verify requires both.
+        <div className="space-y-2">
           <input
             type="text"
             value={name}
@@ -180,51 +190,89 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
             maxLength={10}
             className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
           />
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
-            className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-          />
         </div>
+      ) : (
+        <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap size={16} className="text-bags" />
+            <p className="text-sm font-bold text-bags">Launch a Creator Token on Bags</p>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Opens bags.fm in a new tab with your meme&apos;s image and details prefilled. You
+            connect and sign on Bags — MemeDay never holds your keys or signs anything here.
+          </p>
 
-        {/* Required disclosure, shown before the user can leave for bags.fm. The
-            partner cut comes off Bags' own platform fee, not the creator's —
-            see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
-        <p className="text-xs text-gray-500 mb-3">
-          MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
-          tokens launched through this link. This does not reduce your own creator fees.
-        </p>
+          <div className="space-y-2 mb-3">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value.slice(0, 32))}
+              placeholder="Token name"
+              maxLength={32}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+            <input
+              type="text"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
+              placeholder="Ticker (2-10 chars, e.g. MLRD)"
+              maxLength={10}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
 
-        <button
-          onClick={handleLaunch}
-          disabled={!ticker.trim() || !name.trim() || launching || verifying}
-          className="w-full py-2.5 rounded-xl font-bold text-white bg-bags hover:bg-bags-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-        >
-          {launching || verifying ? <Loader2 size={16} className="animate-spin" /> : <ExternalLink size={16} />}
-          Launch on Bags
-        </button>
-      </div>
+          {/* Required disclosure, shown before the user can leave for bags.fm. The
+              partner cut comes off Bags' own platform fee, not the creator's —
+              see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
+          <p className="text-xs text-gray-500 mb-3">
+            MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
+            tokens launched through this link. This does not reduce your own creator fees.
+          </p>
 
-      {awaitingMint && (
+          <button
+            onClick={handleLaunch}
+            disabled={!ticker.trim() || !name.trim() || launching || verifying}
+            className="w-full py-2.5 rounded-xl font-bold text-white bg-bags hover:bg-bags-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+          >
+            {launching || verifying ? <Loader2 size={16} className="animate-spin" /> : <ExternalLink size={16} />}
+            Launch on Bags
+          </button>
+        </div>
+      )}
+
+      {/* Claim-only mode always shows this panel (there is no launch step to
+          gate it behind); launch mode still gates it on having just opened
+          bags.fm (KAN-79). */}
+      {(claimOnly || awaitingMint) && (
         <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
-          <p className="text-sm font-semibold text-white mb-1">Launched your token?</p>
+          <p className="text-sm font-semibold text-white mb-1">
+            {claimOnly ? "Claim your Bags token" : "Launched your token?"}
+          </p>
           <p className="text-xs text-gray-400 mb-3">
             Paste the mint address Bags gave you so MemeDay can verify and show it on your
             profile.
+          </p>
+          <p className="text-xs text-gray-500 mb-3">
+            This binding is permanent and cannot be changed later.
           </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={mintAddress}
               onChange={(e) => setMintAddress(e.target.value)}
-              placeholder="Token mint address"
+              placeholder="Token mint address or bags.fm link"
               className="flex-1 bg-bg/80 border border-border rounded-xl px-4 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-accent placeholder:text-gray-600"
             />
             <button
-              onClick={() => verify(mintAddress.trim())}
-              disabled={!mintAddress.trim() || verifying}
+              onClick={handleVerifyMint}
+              disabled={!mintAddress.trim() || !ticker.trim() || !name.trim() || verifying}
               className="px-4 py-2.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
               {verifying ? <Loader2 size={16} className="animate-spin" /> : "Verify"}

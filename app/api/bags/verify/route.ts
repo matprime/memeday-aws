@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/cognito";
-import { getUserById, createVerifiedBagsToken } from "@/lib/db";
+import { getUserById, getVerifiedBagsToken, createVerifiedBagsToken, BagsTokenAlreadyBoundError } from "@/lib/db";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyBagsLaunch, BagsVerifyError, type VerifyLaunchSuccess } from "@/lib/bags-server";
 
@@ -64,13 +64,38 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  const token = await createVerifiedBagsToken({
-    creatorId: userId,
-    tokenMint: result.tokenMint,
-    symbol: symbol.trim(),
-    name: name.trim(),
-    partnerAttributed: result.partnerAttributed,
-  });
+  // One token per creator is a permanent, one-time binding (KAN-79). Checked
+  // here first so a double click or a retry on the same mint is a safe no-op
+  // (200, no write) instead of an error, and so a legacy TOKEN#<mint> row
+  // from before this change (no TOKEN#PRIMARY for the DB condition to catch)
+  // is still rejected. The DB condition in createVerifiedBagsToken stays too
+  // — this pre-check alone is racy.
+  const existing = await getVerifiedBagsToken(userId);
+  if (existing) {
+    if (existing.tokenMint === result.tokenMint) {
+      return NextResponse.json({ token: existing, simulated: result.simulated });
+    }
+    return NextResponse.json(
+      { error: "This account is already bound to a Bags token. The binding is permanent and cannot be changed." },
+      { status: 409 }
+    );
+  }
+
+  let token;
+  try {
+    token = await createVerifiedBagsToken({
+      creatorId: userId,
+      tokenMint: result.tokenMint,
+      symbol: symbol.trim(),
+      name: name.trim(),
+      partnerAttributed: result.partnerAttributed,
+    });
+  } catch (err) {
+    if (err instanceof BagsTokenAlreadyBoundError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
 
   return NextResponse.json({ token, simulated: result.simulated });
 }

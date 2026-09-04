@@ -105,3 +105,40 @@ test("isPlausibleSolanaAddress: rejects obviously-invalid input", async () => {
   assert.strictEqual(isPlausibleSolanaAddress("short"), false);
   assert.strictEqual(isPlausibleSolanaAddress(""), false);
 });
+
+// ── extractBagsTokenMint (KAN-79) ───────────────────────────────────────────
+
+const VALID_MINT = "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS";
+
+test("extractBagsTokenMint: accepts a bare mint", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint(VALID_MINT), VALID_MINT);
+});
+
+test("extractBagsTokenMint: accepts a bags.fm URL", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint(`https://bags.fm/${VALID_MINT}`), VALID_MINT);
+});
+
+test("extractBagsTokenMint: accepts a bags.fm URL with a trailing slash", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint(`https://bags.fm/${VALID_MINT}/`), VALID_MINT);
+});
+
+test("extractBagsTokenMint: accepts a bags.fm URL with a query string and fragment", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint(`https://bags.fm/${VALID_MINT}?ref=share#top`), VALID_MINT);
+});
+
+test("extractBagsTokenMint: rejects a non-Bags host", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint(`https://evil.fm/${VALID_MINT}`), null);
+  assert.strictEqual(extractBagsTokenMint(`https://notbags.fm/${VALID_MINT}`), null);
+});
+
+test("extractBagsTokenMint: rejects a malformed address, bare or in a URL", async () => {
+  const { extractBagsTokenMint } = await load();
+  assert.strictEqual(extractBagsTokenMint("not-an-address"), null);
+  assert.strictEqual(extractBagsTokenMint("https://bags.fm/not-an-address"), null);
+  assert.strictEqual(extractBagsTokenMint(""), null);
+});
