@@ -5,6 +5,7 @@ const path = require("node:path");
 const { registerHooks } = require("node:module");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { hasAwsCredentials } = require("./helpers/aws-credentials");
+const { createTestCognitoSession } = require("./helpers/test-auth");
 
 // Same .env loading as the other integration tests (see voting-enforcement.test.js).
 for (const envFile of [".env.local", ".env"]) {
@@ -61,68 +62,6 @@ function skipIfNoCredentials(t) {
   return false;
 }
 
-// Same confirmed-user + email-login pattern as email-login.test.js — the
-// verify route authenticates via getUserIdFromRequest (real Cognito access
-// token verification), so there is no way to hit it without a real user.
-async function createTestUserAndLogin(label) {
-  const {
-    CognitoIdentityProviderClient,
-    AdminCreateUserCommand,
-    AdminSetUserPasswordCommand,
-    AdminDeleteUserCommand,
-  } = require("@aws-sdk/client-cognito-identity-provider");
-  const { POST: login } = await load("app/api/auth/email/login/route.ts");
-
-  const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
-  const userPoolId = process.env.COGNITO_USER_POOL_ID;
-  const username = `bags_bind_${label}_${Date.now()}`;
-  const email = `${username}@example.com`;
-  const password = "TestPass123!";
-
-  await client.send(
-    new AdminCreateUserCommand({
-      UserPoolId: userPoolId,
-      Username: username,
-      MessageAction: "SUPPRESS",
-      UserAttributes: [
-        { Name: "email", Value: email },
-        { Name: "email_verified", Value: "true" },
-      ],
-    })
-  );
-  await client.send(
-    new AdminSetUserPasswordCommand({ UserPoolId: userPoolId, Username: username, Password: password, Permanent: true })
-  );
-
-  const loginRes = await login(
-    new Request("http://localhost/api/auth/email/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-forwarded-for": `test-bags-bind-login-${label}-${Date.now()}` },
-      body: JSON.stringify({ email, password }),
-    })
-  );
-  const loginBody = await loginRes.json();
-  const accessToken = loginBody.accessToken;
-  if (!accessToken) {
-    throw new Error(`login did not return an accessToken: ${JSON.stringify(loginBody)}`);
-  }
-  // The login route (app/api/auth/email/login) returns only accessToken/
-  // expiresIn — userId is the Cognito sub, decoded here the same way
-  // decodeJwtSub in lib/store.ts does (without verifying the signature; the
-  // route under test verifies it properly on every request).
-  const payload = JSON.parse(Buffer.from(accessToken.split(".")[1], "base64").toString("utf8"));
-  const userId = payload.sub;
-  if (!userId) {
-    throw new Error("could not decode sub from access token");
-  }
-
-  async function cleanup() {
-    await client.send(new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: username }));
-  }
-
-  return { accessToken, userId, cleanup };
-}
-
 function verifyRequest(accessToken, ip, body) {
   return new Request("http://localhost/api/bags/verify", {
     method: "POST",
@@ -146,7 +85,10 @@ test("bags token binding: first bind writes TOKEN#PRIMARY, a same-mint retry is 
   const { DeleteCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
   const { RATE_LIMITS } = await load("lib/rate-limit-config.ts");
 
-  const { accessToken, userId, cleanup } = await createTestUserAndLogin("first");
+  // Wallet-authenticated (KAN-75): POST /api/bags/verify now requires
+  // getWalletAddressFromRequest to resolve, which only happens for a
+  // Cognito username with the wallet_ prefix.
+  const { accessToken, userId, cleanup } = await createTestCognitoSession(`wallet_TestBindFirst${Date.now()}`);
   const ip = `10.9.0.${Date.now() % 256}`;
   const symbolA = `A${Date.now() % 100000}`;
   const symbolB = `B${Date.now() % 100000}`;
@@ -206,7 +148,8 @@ test("bags token binding: a legacy TOKEN#<mint> row with no TOKEN#PRIMARY is rej
   const { PutCommand, DeleteCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
   const { RATE_LIMITS } = await load("lib/rate-limit-config.ts");
 
-  const { accessToken, userId, cleanup } = await createTestUserAndLogin("legacy");
+  // Wallet-authenticated (KAN-75): see the first test above for why.
+  const { accessToken, userId, cleanup } = await createTestCognitoSession(`wallet_TestBindLegacy${Date.now()}`);
   const ip = `10.9.1.${Date.now() % 256}`;
   const legacyMint = `LegacyMint1111111111111111111111111111${Date.now() % 100000}`.slice(0, 44);
   const newSymbol = `L${Date.now() % 100000}`;
