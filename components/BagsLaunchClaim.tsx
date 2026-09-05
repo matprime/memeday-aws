@@ -1,113 +1,318 @@
-import { NextResponse } from "next/server";
-import { getUserIdFromRequest, getWalletAddressFromRequest } from "@/lib/cognito";
-import { getVerifiedBagsToken, createVerifiedBagsToken, BagsTokenAlreadyBoundError } from "@/lib/db";
-import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
-import { verifyBagsLaunch, BagsVerifyError, type VerifyLaunchSuccess } from "@/lib/bags-server";
+"use client";
 
-// Read-only against Bags and spends nothing, unlike the launch action itself
-// (a link-out that opens a real launch flow on bags.fm, live only). That's
-// why this route has no SOLANA_ENABLED / mainnet gate of its own: off
-// mainnet it still runs, just through the simulated branch inside
-// verifyBagsLaunch (see lib/bags-server.ts) instead of calling Bags.
-export async function POST(req: Request) {
-  const userId = await getUserIdFromRequest(req);
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+import { useEffect, useState } from "react";
+import { Zap, ExternalLink, Loader2 } from "lucide-react";
+import { useAppStore } from "@/lib/store";
+import { getAccessToken } from "@/lib/session";
+import { buildBagsLaunchIntentUrl, extractBagsTokenMint, BagsLaunchConfigError } from "@/lib/bags";
+import { BagsTokenCard } from "@/components/BagsTokenCard";
 
-  // Bags token creation is wallet-only (KAN-75): callerWallet comes from the
-  // token's server-verified username, never from user.walletAddr, which is
-  // client-asserted and only proven for tipping (see lib/wallet-signature.ts,
-  // POST /api/users/wallet). This gate applies before any Bags API call, and
-  // before the rate-limit counters below so a non-wallet caller never spends
-  // that budget.
-  const callerWallet = await getWalletAddressFromRequest(req);
-  if (!callerWallet) {
-    return NextResponse.json(
-      { error: "Connect and verify a wallet to launch a Bags token" },
-      { status: 403 }
+interface Props {
+  // Absent = claim-only mode (KAN-79): no meme was just posted, so there is
+  // nothing to launch from here. Used by BagsProfileClaim to offer the
+  // paste-the-mint recovery panel from a profile page instead of only from
+  // the post-meme success screen.
+  imageUrl?: string;
+  defaultName: string;
+}
+
+interface TokenSummary {
+  tokenMint: string;
+  name: string;
+  symbol: string;
+}
+
+// Shown after a meme posts successfully (see PostMemeModal). Launching is a
+// pure link-out on mainnet — no transaction is ever signed inside MemeDay —
+// and a simulated no-op everywhere else (KAN-29 follow-up, correction 1):
+// GET /api/bags/launch-config and POST /api/bags/verify decide live vs mock
+// server-side, this component just renders whichever they hand back.
+export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
+  const { addToast } = useAppStore();
+  const claimOnly = !imageUrl;
+
+  // Whether the caller already has a verified token drives launch-button vs
+  // card (correction 3). null = still checking.
+  const [existingToken, setExistingToken] = useState<TokenSummary | null | undefined>(undefined);
+
+  const [name, setName] = useState(defaultName.slice(0, 32));
+  const [ticker, setTicker] = useState("");
+  const [description, setDescription] = useState(defaultName);
+  const [launching, setLaunching] = useState(false);
+
+  // Live-mode-only claim step: paste the mint you got from bags.fm.
+  const [awaitingMint, setAwaitingMint] = useState(false);
+  const [mintAddress, setMintAddress] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        if (!accessToken) return;
+        const res = await fetch("/api/bags/my-token", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setExistingToken(data.token ?? null);
+      } catch {
+        // Leave existingToken as undefined -> falls through to the launch
+        // form below rather than blocking the whole success screen on this.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const verify = async (tokenMint?: string) => {
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error("Session expired — sign in again");
+
+      const res = await fetch("/api/bags/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ tokenMint, name, symbol: ticker }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Verification failed");
+
+      setExistingToken({ tokenMint: data.token.tokenMint, name: data.token.name, symbol: data.token.symbol });
+      addToast(
+        data.simulated
+          ? "Simulated launch verified (Preview only — no real token exists)."
+          : "Verified — your Bags launch is now on your profile.",
+        data.simulated ? "bags" : "success"
+      );
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Runs a pasted mint or bags.fm link through extractBagsTokenMint before
+  // ever calling verify, in both launch and claim-only mode (KAN-79).
+  const handleVerifyMint = () => {
+    const mint = extractBagsTokenMint(mintAddress);
+    if (!mint) {
+      setVerifyError("That doesn't look like a valid mint address or bags.fm link.");
+      return;
+    }
+    verify(mint);
+  };
+
+  const handleLaunch = async () => {
+    if (!ticker.trim() || !name.trim() || launching) return;
+    setLaunching(true);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error("Session expired — sign in again");
+
+      const configRes = await fetch("/api/bags/launch-config", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!configRes.ok) throw new Error("Could not reach MemeDay");
+      const config = await configRes.json();
+
+      // Wallet-only gate (KAN-75): checked before either branch below, so it
+      // applies in simulated mode too, not just the live bags.fm link-out.
+      if (!config.walletAuthed) {
+        throw new Error("Connect and verify a wallet to launch a Bags token");
+      }
+
+      if (!config.live) {
+        // Mock path: no bags.fm tab, no Bags API call. Goes straight to a
+        // simulated verify result so the flow stays reviewable on Preview.
+        await verify(undefined);
+        return;
+      }
+
+      const url = buildBagsLaunchIntentUrl({
+        name,
+        ticker,
+        description: description.trim() || undefined,
+        image: imageUrl,
+        partner: config.partnerWallet,
+        partnerConfig: config.partnerConfig,
+      });
+      window.open(url, "_blank", "noopener,noreferrer");
+      setAwaitingMint(true);
+    } catch (err) {
+      addToast(
+        err instanceof BagsLaunchConfigError || err instanceof Error
+          ? err.message
+          : "Could not open the Bags launch flow",
+        "error"
+      );
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  if (existingToken === undefined) {
+    return (
+      <div className="flex items-center justify-center py-6 text-gray-500">
+        <Loader2 size={18} className="animate-spin" />
+      </div>
     );
   }
 
-  const [userLimited, ipLimited] = await Promise.all([
-    isRateLimited("bagsVerifyPerUser", userId),
-    isRateLimited("bagsVerifyPerIp", getClientIp(req)),
-  ]);
-  if (userLimited || ipLimited) {
-    return rateLimitResponse();
+  if (existingToken) {
+    return <BagsTokenCard name={existingToken.name} symbol={existingToken.symbol} tokenMint={existingToken.tokenMint} />;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-  const { tokenMint, name, symbol } = (body ?? {}) as Record<string, unknown>;
+  return (
+    <div className="space-y-4">
+      {claimOnly ? (
+        // Claim-only mode (KAN-79): no launch button, no launch disclosure —
+        // there is no meme image to launch from here. Name/ticker stay
+        // because POST /api/bags/verify requires both. Labels match the
+        // launch-card inputs below (KAN-75) for consistency.
+        <div className="space-y-2">
+          <div>
+            <label htmlFor="bags-token-name" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Token name
+            </label>
+            <input
+              id="bags-token-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value.slice(0, 32))}
+              placeholder="Token name"
+              maxLength={32}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
+          <div>
+            <label htmlFor="bags-token-ticker" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Ticker
+            </label>
+            <input
+              id="bags-token-ticker"
+              type="text"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
+              placeholder="Ticker (2-10 chars, e.g. MLRD)"
+              maxLength={10}
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap size={16} className="text-bags" />
+            <p className="text-sm font-bold text-bags">Launch a Creator Token on Bags</p>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Opens bags.fm in a new tab with your meme&apos;s image and details prefilled. You
+            connect and sign on Bags — MemeDay never holds your keys or signs anything here.
+          </p>
 
-  // name/symbol are what the creator entered when they opened the launch —
-  // Bags itself doesn't return them from either GET below, so they are
-  // stored as-supplied and are NOT independently verified against Bags.
-  if (typeof name !== "string" || !name.trim() || name.length > 32) {
-    return NextResponse.json({ error: "name is required (max 32 chars)" }, { status: 400 });
-  }
-  if (typeof symbol !== "string" || !symbol.trim() || symbol.length > 10) {
-    return NextResponse.json({ error: "symbol is required (max 10 chars)" }, { status: 400 });
-  }
-  // Absent entirely in the simulated case (see BagsLaunchClaim.tsx) — only
-  // required once verifyBagsLaunch actually needs to call Bags.
-  const tokenMintValue = typeof tokenMint === "string" ? tokenMint : undefined;
-  if (tokenMint !== undefined && tokenMintValue === undefined) {
-    return NextResponse.json({ error: "tokenMint must be a string" }, { status: 400 });
-  }
+          <div className="space-y-2 mb-3">
+            <div>
+              <label htmlFor="bags-token-name" className="text-xs text-gray-400 mb-1.5 block font-medium">
+                Token name
+              </label>
+              <input
+                id="bags-token-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value.slice(0, 32))}
+                placeholder="Token name"
+                maxLength={32}
+                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+              />
+            </div>
+            <div>
+              <label htmlFor="bags-token-ticker" className="text-xs text-gray-400 mb-1.5 block font-medium">
+                Ticker
+              </label>
+              <input
+                id="bags-token-ticker"
+                type="text"
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
+                placeholder="Ticker (2-10 chars, e.g. MLRD)"
+                maxLength={10}
+                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+              />
+            </div>
+            <div>
+              <label htmlFor="bags-token-description" className="text-xs text-gray-400 mb-1.5 block font-medium">
+                Description
+              </label>
+              <input
+                id="bags-token-description"
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optional)"
+                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+              />
+            </div>
+          </div>
 
-  let result: VerifyLaunchSuccess;
-  try {
-    result = await verifyBagsLaunch({
-      callerWallet,
-      tokenMint: tokenMintValue,
-      name,
-      symbol,
-    });
-  } catch (err) {
-    if (err instanceof BagsVerifyError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
-    }
-    throw err;
-  }
+          {/* Required disclosure, shown before the user can leave for bags.fm. The
+              partner cut comes off Bags' own platform fee, not the creator's —
+              see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
+          <p className="text-xs text-gray-500 mb-3">
+            MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
+            tokens launched through this link. This does not reduce your own creator fees.
+          </p>
 
-  // One token per creator is a permanent, one-time binding (KAN-79). Checked
-  // here first so a double click or a retry on the same mint is a safe no-op
-  // (200, no write) instead of an error, and so a legacy TOKEN#<mint> row
-  // from before this change (no TOKEN#PRIMARY for the DB condition to catch)
-  // is still rejected. The DB condition in createVerifiedBagsToken stays too
-  // — this pre-check alone is racy.
-  const existing = await getVerifiedBagsToken(userId);
-  if (existing) {
-    if (existing.tokenMint === result.tokenMint) {
-      return NextResponse.json({ token: existing, simulated: result.simulated });
-    }
-    return NextResponse.json(
-      { error: "This account is already bound to a Bags token. The binding is permanent and cannot be changed." },
-      { status: 409 }
-    );
-  }
+          <button
+            onClick={handleLaunch}
+            disabled={!ticker.trim() || !name.trim() || launching || verifying}
+            className="w-full py-2.5 rounded-xl font-bold text-white bg-bags hover:bg-bags-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+          >
+            {launching || verifying ? <Loader2 size={16} className="animate-spin" /> : <ExternalLink size={16} />}
+            Launch on Bags
+          </button>
+        </div>
+      )}
 
-  let token;
-  try {
-    token = await createVerifiedBagsToken({
-      creatorId: userId,
-      tokenMint: result.tokenMint,
-      symbol: symbol.trim(),
-      name: name.trim(),
-      partnerAttributed: result.partnerAttributed,
-    });
-  } catch (err) {
-    if (err instanceof BagsTokenAlreadyBoundError) {
-      return NextResponse.json({ error: err.message }, { status: 409 });
-    }
-    throw err;
-  }
-
-  return NextResponse.json({ token, simulated: result.simulated });
+      {/* Claim-only mode always shows this panel (there is no launch step to
+          gate it behind); launch mode still gates it on having just opened
+          bags.fm (KAN-79). */}
+      {(claimOnly || awaitingMint) && (
+        <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
+          <p className="text-sm font-semibold text-white mb-1">
+            {claimOnly ? "Claim your Bags token" : "Launched your token?"}
+          </p>
+          <p className="text-xs text-gray-400 mb-3">
+            Paste the mint address Bags gave you so MemeDay can verify and show it on your
+            profile.
+          </p>
+          <p className="text-xs text-gray-500 mb-3">
+            This binding is permanent and cannot be changed later.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={mintAddress}
+              onChange={(e) => setMintAddress(e.target.value)}
+              placeholder="Token mint address or bags.fm link"
+              className="flex-1 bg-bg/80 border border-border rounded-xl px-4 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-accent placeholder:text-gray-600"
+            />
+            <button
+              onClick={handleVerifyMint}
+              disabled={!mintAddress.trim() || !ticker.trim() || !name.trim() || verifying}
+              className="px-4 py-2.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {verifying ? <Loader2 size={16} className="animate-spin" /> : "Verify"}
+            </button>
+          </div>
+          {verifyError && <p className="text-xs text-red-400 mt-2">{verifyError}</p>}
+        </div>
+      )}
+    </div>
+  );
 }
