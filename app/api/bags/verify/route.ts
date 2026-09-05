@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getUserIdFromRequest } from "@/lib/cognito";
-import { getUserById, getVerifiedBagsToken, createVerifiedBagsToken, BagsTokenAlreadyBoundError } from "@/lib/db";
+import { getUserIdFromRequest, getWalletAddressFromRequest } from "@/lib/cognito";
+import { getVerifiedBagsToken, createVerifiedBagsToken, BagsTokenAlreadyBoundError } from "@/lib/db";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyBagsLaunch, BagsVerifyError, type VerifyLaunchSuccess } from "@/lib/bags-server";
 
@@ -13,6 +13,20 @@ export async function POST(req: Request) {
   const userId = await getUserIdFromRequest(req);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Bags token creation is wallet-only (KAN-75): callerWallet comes from the
+  // token's server-verified username, never from user.walletAddr, which is
+  // client-asserted and only proven for tipping (see lib/wallet-signature.ts,
+  // POST /api/users/wallet). This gate applies before any Bags API call, and
+  // before the rate-limit counters below so a non-wallet caller never spends
+  // that budget.
+  const callerWallet = await getWalletAddressFromRequest(req);
+  if (!callerWallet) {
+    return NextResponse.json(
+      { error: "Connect and verify a wallet to launch a Bags token" },
+      { status: 403 }
+    );
   }
 
   const [userLimited, ipLimited] = await Promise.all([
@@ -47,12 +61,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "tokenMint must be a string" }, { status: 400 });
   }
 
-  const user = await getUserById(userId);
-
   let result: VerifyLaunchSuccess;
   try {
     result = await verifyBagsLaunch({
-      callerWallet: user?.walletAddr,
+      callerWallet,
       tokenMint: tokenMintValue,
       name,
       symbol,
