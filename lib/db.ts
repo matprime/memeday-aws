@@ -774,9 +774,13 @@ export async function dismissReport(memeId: string): Promise<void> {
   );
 }
 
-// Overwrites on a repeat verify of the same mint (fresh verifiedAt/
-// partnerAttributed) rather than rejecting — re-verifying isn't an error, and
-// there is nothing here a second write would corrupt.
+// SK is the constant TOKEN#PRIMARY rather than TOKEN#<tokenMint> (KAN-79):
+// tokenMint lives only in the tokenMint attribute, never in the key, so a
+// creator has at most one item this function can ever write, and the
+// ConditionExpression below makes the first write of it a one-time binding —
+// no TransactWriteItems, no second source of truth on the USER# item.
+export class BagsTokenAlreadyBoundError extends Error {}
+
 export async function createVerifiedBagsToken(token: {
   creatorId: string;
   tokenMint: string;
@@ -786,7 +790,7 @@ export async function createVerifiedBagsToken(token: {
 }): Promise<DbBagsToken> {
   const item: Record<string, unknown> = {
     PK: `USER#${token.creatorId}`,
-    SK: `TOKEN#${token.tokenMint}`,
+    SK: "TOKEN#PRIMARY",
     creatorId: token.creatorId,
     tokenMint: token.tokenMint,
     symbol: token.symbol,
@@ -794,7 +798,20 @@ export async function createVerifiedBagsToken(token: {
     partnerAttributed: token.partnerAttributed,
     verifiedAt: new Date().toISOString(),
   };
-  await dynamo.send(new PutCommand({ TableName: TABLE, Item: item }));
+  try {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(PK)",
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new BagsTokenAlreadyBoundError("This account is already bound to a Bags token");
+    }
+    throw err;
+  }
   return parseBagsToken(item);
 }
 

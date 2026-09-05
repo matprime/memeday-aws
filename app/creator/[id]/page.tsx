@@ -5,6 +5,7 @@ import { getUserById, getMemesByCreator, getVerifiedBagsToken } from "@/lib/db";
 import { MOCK_CREATORS } from "@/lib/data";
 import { MemeCard } from "@/components/MemeCard";
 import { BagsTokenCard } from "@/components/BagsTokenCard";
+import { BagsProfileClaim } from "@/components/BagsProfileClaim";
 import { ImageIcon, Zap, BarChart3 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -89,9 +90,13 @@ export default async function CreatorPage(props: Props) {
         </div>
       </div>
 
-      {bagsToken && (
+      {bagsToken ? (
         <div className="mb-8">
           <BagsTokenCard name={bagsToken.name} symbol={bagsToken.symbol} tokenMint={bagsToken.tokenMint} />
+        </div>
+      ) : (
+        <div className="mb-8">
+          <BagsProfileClaim profileUserId={userId} />
         </div>
       )}
 
