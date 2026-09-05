@@ -91,6 +91,30 @@ export function isPlausibleSolanaAddress(value: string): boolean {
   return BASE58_ADDRESS_RE.test(value.trim());
 }
 
+// Accepts either a bare mint or a https://bags.fm/<mint> URL (trailing slash,
+// query string and fragment all tolerated) and returns the mint if it passes
+// isPlausibleSolanaAddress, otherwise null. Pure, no network calls, no
+// secrets — used by the claim-entry-point flow (KAN-79) so a pasted mint or a
+// pasted bags.fm link both work the same way.
+export function extractBagsTokenMint(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      return null;
+    }
+    if (url.hostname !== "bags.fm") return null;
+    candidate = url.pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+  }
+
+  return isPlausibleSolanaAddress(candidate) ? candidate : null;
+}
+
 /**
  * Buy creator tokens — invest in a creator.
  * Uses Bags bonding curve pricing.
