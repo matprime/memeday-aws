@@ -144,6 +144,37 @@ test("POST /api/users: an email-authenticated caller's body-supplied walletAddr 
   }
 });
 
+test("POST /api/users: body-supplied creatorTokenAddr and creatorTokenSymbol are ignored, not an error (KAN-75 comment 12056)", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+  const { POST } = await load("app/api/users/route.ts");
+  const { dynamo, TABLE } = await load("lib/dynamo.ts");
+
+  const session = await createTestCognitoSession(`test-users-route-tokenfields-${Date.now()}`);
+  try {
+    const res = await POST(
+      new Request("http://x/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken}` },
+        body: JSON.stringify({
+          creatorTokenAddr: "SomeAddressTheClientAsserted1111111111111",
+          creatorTokenSymbol: "FAKE",
+        }),
+      })
+    );
+    assert.strictEqual(res.status, 200, "an older client sending these fields must not error");
+    const { user } = await res.json();
+    assert.strictEqual(user.creatorTokenAddr, undefined, "creatorTokenAddr is never taken from the body");
+    assert.strictEqual(user.creatorTokenSymbol, undefined, "creatorTokenSymbol is never taken from the body");
+
+    const item = await getUserItem(dynamo, TABLE, session.userId);
+    assert.strictEqual(item.creatorTokenAddr, undefined, "creatorTokenAddr attribute is absent from the row itself");
+    assert.strictEqual(item.creatorTokenSymbol, undefined, "creatorTokenSymbol attribute is absent from the row itself");
+  } finally {
+    await deleteUserItem(dynamo, TABLE, session.userId);
+    await session.cleanup();
+  }
+});
+
 // ── POST /api/users/wallet: link route (KAN-75) ─────────────────────────────
 
 test("POST /api/users/wallet: a valid challenge and signature link the wallet", async (t) => {

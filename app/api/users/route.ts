@@ -14,7 +14,11 @@ export async function POST(req: Request) {
     // client-asserted with no ownership proof. A wallet-authenticated caller
     // already has a server-verified address on the token; anyone else links
     // one through POST /api/users/wallet instead.
-    const { email, displayName, authMethods, bagsProjectId, creatorTokenAddr, creatorTokenSymbol } = body;
+    // creatorTokenAddr/creatorTokenSymbol are never trusted from the body
+    // either (KAN-75 comment 12056): same unproven-client-write bug as
+    // walletAddr above. Ignored rather than erroring, so an older client
+    // does not break.
+    const { email, displayName, authMethods, bagsProjectId } = body;
     const walletAddr = (await getWalletAddressFromRequest(req)) ?? undefined;
 
     const user = await upsertUser({
@@ -26,8 +30,6 @@ export async function POST(req: Request) {
       displayName,
       authMethods,
       bagsProjectId,
-      creatorTokenAddr,
-      creatorTokenSymbol,
     });
 
     return NextResponse.json({ user });
