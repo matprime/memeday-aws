@@ -37,7 +37,7 @@ Registered as super-properties on every event:
 |---|---|
 | `platform` | `"web"` |
 | `network` | `SOLANA_NETWORK` (see `lib/solana/network.ts`), passed to `initAnalytics()` |
-| `environment` | `NODE_ENV` — `"development"` locally, `"production"` on Vercel |
+| `environment` | `NEXT_PUBLIC_VERCEL_ENV` with `NODE_ENV` fallback — `"preview" \| "production" \| "development"` |
 
 **Every saved insight must filter on `environment = "production"`.** The PostHog free
 tier allows one project, so local dev and production share it; without that filter,
@@ -57,6 +57,9 @@ developer clicks land in the funnels you are trying to read.
 | `mint_confirmed` | `createNft(...).sendAndConfirm` returned at `confirmed` commitment. | `mintAddress` | `components/PostMemeModal.tsx` |
 | `share_clicked` | User taps a share option (native, per-platform, or copy link). | `memeId`, `channel`, `surface`: `"feed" \| "detail"` | `components/ShareBar.tsx` |
 | `visit_from_share` | `/meme/[id]` loads with `?ref=share&ch=<channel>&m=<memeId>` in the URL. Once per session per meme+channel (`sessionStorage`), even on refresh. | `memeId`, `channel` | `components/MemePageClient.tsx` |
+| `bags_launch_started` | `handleLaunch` fires after the wallet gate passes, before either the live bags.fm link-out or the simulated `verify()` call. | `mode`: `"live" \| "simulated"` | `components/BagsLaunchClaim.tsx` |
+| `bags_verify_started` | `handleVerifyMint` fires after `extractBagsTokenMint` succeeds, before calling `verify(mint)`. | — | `components/BagsLaunchClaim.tsx` |
+| `bags_verify_confirmed` | `POST /api/bags/verify` succeeded and `setExistingToken` ran. | `simulated`, `tokenMint` | `components/BagsLaunchClaim.tsx` |
 
 Mint events deliberately carry **no** `memeId`: the meme row is created after the mint
 completes, so at mint time no id exists. Join them to the upload by person/session.
@@ -87,6 +90,14 @@ than the click, so PostHog's per-user funnel matching doesn't apply here). Build
 funnel breakdown by `channel`, filtered by `memeId` for a single meme's numbers, or
 left unfiltered for the platform-level rollup. This is the number for the weekly review
 and any pitch deck.
+
+**Bags funnel** - launch intent to verify attempt to verified
+1. `bags_launch_started`
+2. `bags_verify_started`
+3. `bags_verify_confirmed`
+
+Ordered, default 1-day conversion window. Breakdown suggestion: by `mode` once live
+launches are common.
 
 Breakdown suggestions: `signup_completed` by `method`; `vote_cast` by `surface`;
 everything by `network` once prod runs mainnet.

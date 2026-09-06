@@ -16,6 +16,9 @@ export const EVENTS = {
   mintConfirmed: "mint_confirmed",
   shareClicked: "share_clicked",
   visitFromShare: "visit_from_share",
+  bagsLaunchStarted: "bags_launch_started",
+  bagsVerifyStarted: "bags_verify_started",
+  bagsVerifyConfirmed: "bags_verify_confirmed",
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];
@@ -54,7 +57,7 @@ export function initAnalytics(network: string) {
   posthog.register({
     platform: "web",
     network,
-    environment: process.env.NODE_ENV,
+    environment: process.env.NEXT_PUBLIC_VERCEL_ENV ?? process.env.NODE_ENV,
   });
   initialized = true;
 }
