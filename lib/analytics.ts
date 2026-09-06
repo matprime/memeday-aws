@@ -7,6 +7,7 @@ import posthog from "posthog-js";
 // name here is missing from that doc.
 export const EVENTS = {
   signupCompleted: "signup_completed",
+  loginCompleted: "login_completed",
   memeUploaded: "meme_uploaded",
   voteCast: "vote_cast",
   commentPosted: "comment_posted",

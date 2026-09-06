@@ -51,6 +51,7 @@ export function EmailAuthModal({ onClose }: Props) {
   const finishLogin = async (accessToken: string, isNewAccount = false) => {
     setCognitoToken(accessToken, "email", email);
     if (isNewAccount) track(EVENTS.signupCompleted, { method: "email" });
+    else track(EVENTS.loginCompleted, { method: "email" });
     // Ensure the user item exists with the EMAIL# lookup entry
     await fetch("/api/users", {
       method: "POST",

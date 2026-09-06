@@ -48,6 +48,7 @@ developer clicks land in the funnels you are trying to read.
 | Event | Fires when | Properties | Emitted from |
 |---|---|---|---|
 | `signup_completed` | A **new** account becomes usable. Email: after the verification code is confirmed and the auto-login succeeds. Wallet: first-ever signature verification for that address (`isNewUser` from `/api/auth/wallet/verify`). Return logins do **not** fire it. | `method`: `"email" \| "wallet"` | `components/EmailAuthModal.tsx`, `components/WalletAuthSync.tsx` |
+| `login_completed` | The returning-user counterpart to `signup_completed`, firing on the non-new-account branch of each auth path. Email: `finishLogin`'s `else` branch when `isNewAccount` is false. Wallet: the `else` branch of the `isNewUser` check in the wallet auth effect. | `method`: `"email" \| "wallet"` | `components/EmailAuthModal.tsx`, `components/WalletAuthSync.tsx` |
 | `meme_uploaded` | `POST /api/memes` succeeded — image uploaded, Lambda validation passed, row written. | `memeId`, `isNFT`, `minted` | `components/PostMemeModal.tsx` |
 | `vote_cast` | Vote accepted by the server. Not fired for duplicate votes or failures. | `memeId`, `surface`: `"feed" \| "detail"` | `components/MemeCard.tsx`, `components/MemeActionBar.tsx` |
 | `comment_posted` | `POST /api/comments` succeeded. Not fired for empty bodies, logged-out attempts, or failures. | `memeId` | `components/CommentSection.tsx` |
@@ -71,10 +72,14 @@ display and the deep-link fallback are. Add `tip_sent` when tips move past valid
 
 Both are funnels, ordered, default 1-day conversion window.
 
-**Activation funnel** — visit → signup → upload
+**Activation funnel** - visit to signup/login to upload
 1. `$pageview`
-2. `signup_completed`
+2. `signup_completed` OR `login_completed`
 3. `meme_uploaded`
+
+Measures all posting activation, new and returning users. A separate new-user-only
+view can filter step 2 to `signup_completed` alone if that narrower number is still
+wanted for onboarding-specific reporting.
 
 **Money funnel** — view meme → tip/mint intent → confirmed
 1. `$pageview` where `$pathname` contains `/meme/`
