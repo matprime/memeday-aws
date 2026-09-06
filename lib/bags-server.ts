@@ -203,6 +203,13 @@ export async function verifyBagsLaunch(input: VerifyLaunchInput): Promise<Verify
   } catch {
     throw new BagsVerifyError(502, "Failed to reach Bags");
   }
+  // TEMPORARY (KAN-82 investigation) - remove once the creator-mismatch bug
+  // is diagnosed. Logs no secrets, just the inputs and Bags response for
+  // this specific ownership check.
+  console.log(
+    "[bags-verify-debug]",
+    JSON.stringify({ tokenMint: input.tokenMint, callerWallet: input.callerWallet, creators })
+  );
   if (!isCallerVerifiedCreator(creators, input.callerWallet)) {
     throw new BagsVerifyError(403, "This wallet is not recorded as the creator of this token on Bags");
   }
