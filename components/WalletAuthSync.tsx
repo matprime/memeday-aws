@@ -86,6 +86,7 @@ export function WalletAuthSync() {
         if (!useAppStore.getState().cognitoToken) {
           setCognitoToken(accessToken, "wallet");
           if (isNewUser) track(EVENTS.signupCompleted, { method: "wallet" });
+          else track(EVENTS.loginCompleted, { method: "wallet" });
         }
       } catch (err) {
         addToast(
