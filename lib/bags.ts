@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Bags.fm integration (KAN-29).
  *
