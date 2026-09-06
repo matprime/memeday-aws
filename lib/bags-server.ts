@@ -95,7 +95,12 @@ export interface BagsTokenCreator {
 }
 
 function parseTokenLaunch(raw: unknown): BagsTokenLaunch {
-  const obj = (raw ?? {}) as Record<string, unknown>;
+  // Same envelope as getTokenCreators below: Bags wraps every response as
+  // { success, response }, confirmed against the live API during the
+  // KAN-79 creator-mismatch investigation. Before this fix, every field
+  // below silently read as undefined off the wrong object, which made
+  // isPartnerAttributed always return false regardless of the real launch.
+  const obj = ((raw as { response?: unknown })?.response ?? {}) as Record<string, unknown>;
   const accountKeys = Array.isArray(obj.accountKeys)
     ? obj.accountKeys.filter((k): k is string => typeof k === "string")
     : null;
@@ -128,7 +133,11 @@ export async function getTokenLaunch(tokenMint: string): Promise<BagsTokenLaunch
 
 export async function getTokenCreators(tokenMint: string): Promise<BagsTokenCreator[]> {
   const raw = await bagsGet(`/token-launch/creator/v3?tokenMint=${encodeURIComponent(tokenMint)}`);
-  return Array.isArray(raw) ? raw.map(parseTokenCreator) : [];
+  // Bags wraps every response as { success, response }, not a bare array or
+  // object (confirmed against the live API during the KAN-79 creator-mismatch
+  // investigation). Unwrap that envelope before checking shape.
+  const list = (raw as { response?: unknown })?.response;
+  return Array.isArray(list) ? list.map(parseTokenCreator) : [];
 }
 
 // Attribution check per KAN-73: the partner wallet address itself shows up in
@@ -203,13 +212,6 @@ export async function verifyBagsLaunch(input: VerifyLaunchInput): Promise<Verify
   } catch {
     throw new BagsVerifyError(502, "Failed to reach Bags");
   }
-  // TEMPORARY (KAN-82 investigation) - remove once the creator-mismatch bug
-  // is diagnosed. Logs no secrets, just the inputs and Bags response for
-  // this specific ownership check.
-  console.log(
-    "[bags-verify-debug]",
-    JSON.stringify({ tokenMint: input.tokenMint, callerWallet: input.callerWallet, creators })
-  );
   if (!isCallerVerifiedCreator(creators, input.callerWallet)) {
     throw new BagsVerifyError(403, "This wallet is not recorded as the creator of this token on Bags");
   }
