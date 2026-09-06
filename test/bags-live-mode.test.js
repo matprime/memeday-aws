@@ -48,13 +48,18 @@ test("verifyBagsLaunch: live gate true calls the real client (fetch mocked, no l
       return {
         ok: true,
         status: 200,
-        json: async () => [{ wallet: "CallerWallet1111111111111111111111111111", isCreator: true }],
+        // Bags wraps every response as { success, response } (confirmed
+        // against the live API, KAN-82) — not a bare array.
+        json: async () => ({
+          success: true,
+          response: [{ wallet: "CallerWallet1111111111111111111111111111", isCreator: true }],
+        }),
       };
     }
     return {
       ok: true,
       status: 200,
-      json: async () => ({ accountKeys: ["a", process.env.BAGS_PARTNER_WALLET] }),
+      json: async () => ({ success: true, response: { accountKeys: ["a", process.env.BAGS_PARTNER_WALLET] } }),
     };
   };
   try {
@@ -98,8 +103,57 @@ test("verifyBagsLaunch: live gate true rejects a creator mismatch with 403", asy
   global.fetch = async () => ({
     ok: true,
     status: 200,
-    json: async () => [{ wallet: "SomeoneElse1111111111111111111111111111111", isCreator: true }],
+    // Real envelope (KAN-82) with a genuinely different wallet than the
+    // caller — this must reject on the mismatch itself, not because the
+    // response was silently unparsed.
+    json: async () => ({
+      success: true,
+      response: [{ wallet: "SomeoneElse1111111111111111111111111111111", isCreator: true }],
+    }),
   });
+  try {
+    await assert.rejects(
+      () =>
+        verifyBagsLaunch({
+          callerWallet: "CallerWallet1111111111111111111111111111",
+          tokenMint: "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS",
+          name: "n",
+          symbol: "s",
+        }),
+      (err) => err instanceof BagsVerifyError && err.status === 403
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Regression test for KAN-82: before the fix, getTokenCreators treated the
+// raw fetch body as the payload itself. A response that is NOT wrapped in
+// { success, response } (the old, wrong assumption) must not be silently
+// misread as a valid empty list that happens to match — it must genuinely
+// find no creators and reject, the same as any other non-matching response.
+test("verifyBagsLaunch: an unwrapped (legacy-shaped) creators response still rejects with 403, not a silent pass", async () => {
+  const { verifyBagsLaunch, BagsVerifyError } = await load();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("/creator/v3")) {
+      return {
+        ok: true,
+        status: 200,
+        // Bare array, not wrapped — this is the shape the pre-KAN-82 code
+        // incorrectly expected. getTokenCreators must not find this array
+        // by accident; Array.isArray(raw) is false here since raw itself
+        // is the wrapper-shaped object once real parsing is in place, so
+        // this must resolve to no creators found, i.e. still a 403.
+        json: async () => [{ wallet: "CallerWallet1111111111111111111111111111", isCreator: true }],
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, response: { accountKeys: ["a", process.env.BAGS_PARTNER_WALLET] } }),
+    };
+  };
   try {
     await assert.rejects(
       () =>

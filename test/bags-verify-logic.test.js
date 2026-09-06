@@ -133,7 +133,12 @@ function withMockedFetch(response, fn) {
 test("getTokenLaunch: sends the x-api-key header and parses a full response", async () => {
   const { getTokenLaunch } = await load();
   await withMockedFetch(
-    { body: { accountKeys: ["a", "b"], status: "live", launchWallet: "w", creatorFeeBps: 10000, dbcConfigKey: "c", dbcPoolKey: "p" } },
+    {
+      body: {
+        success: true,
+        response: { accountKeys: ["a", "b"], status: "live", launchWallet: "w", creatorFeeBps: 10000, dbcConfigKey: "c", dbcPoolKey: "p" },
+      },
+    },
     async (getCapture) => {
       const launch = await getTokenLaunch("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
       assert.deepStrictEqual(launch, {
@@ -153,7 +158,7 @@ test("getTokenLaunch: sends the x-api-key header and parses a full response", as
 
 test("getTokenLaunch: treats a null accountKeys as null, not an empty array", async () => {
   const { getTokenLaunch } = await load();
-  await withMockedFetch({ body: { accountKeys: null } }, async () => {
+  await withMockedFetch({ body: { success: true, response: { accountKeys: null } } }, async () => {
     const launch = await getTokenLaunch("mint");
     assert.strictEqual(launch.accountKeys, null);
   });
@@ -161,7 +166,7 @@ test("getTokenLaunch: treats a null accountKeys as null, not an empty array", as
 
 test("getTokenLaunch: missing optional fields come back undefined, not thrown", async () => {
   const { getTokenLaunch } = await load();
-  await withMockedFetch({ body: { accountKeys: [] } }, async () => {
+  await withMockedFetch({ body: { success: true, response: { accountKeys: [] } } }, async () => {
     const launch = await getTokenLaunch("mint");
     assert.strictEqual(launch.status, undefined);
     assert.strictEqual(launch.launchWallet, undefined);
@@ -171,7 +176,12 @@ test("getTokenLaunch: missing optional fields come back undefined, not thrown", 
 test("getTokenCreators: parses an array of creator rows", async () => {
   const { getTokenCreators } = await load();
   await withMockedFetch(
-    { body: [{ wallet: "w1", royaltyBps: 10000, isCreator: true, isAdmin: false, provider: "twitter", providerUsername: "u" }] },
+    {
+      body: {
+        success: true,
+        response: [{ wallet: "w1", royaltyBps: 10000, isCreator: true, isAdmin: false, provider: "twitter", providerUsername: "u" }],
+      },
+    },
     async (getCapture) => {
       const creators = await getTokenCreators("mint");
       assert.strictEqual(creators.length, 1);
@@ -183,9 +193,9 @@ test("getTokenCreators: parses an array of creator rows", async () => {
   );
 });
 
-test("getTokenCreators: a non-array response comes back as an empty array, not a throw", async () => {
+test("getTokenCreators: a missing or non-array response field comes back as an empty array, not a throw", async () => {
   const { getTokenCreators } = await load();
-  await withMockedFetch({ body: { error: "not found" } }, async () => {
+  await withMockedFetch({ body: { success: false, error: "not found" } }, async () => {
     const creators = await getTokenCreators("mint");
     assert.deepStrictEqual(creators, []);
   });
