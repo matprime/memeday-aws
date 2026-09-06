@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
 import { buildBagsLaunchIntentUrl, extractBagsTokenMint, BagsLaunchConfigError } from "@/lib/bags";
 import { BagsTokenCard } from "@/components/BagsTokenCard";
+import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
   // Absent = claim-only mode (KAN-79): no meme was just posted, so there is
@@ -84,6 +85,7 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
       if (!res.ok) throw new Error(data.error ?? "Verification failed");
 
       setExistingToken({ tokenMint: data.token.tokenMint, name: data.token.name, symbol: data.token.symbol });
+      track(EVENTS.bagsVerifyConfirmed, { simulated: data.simulated, tokenMint: data.token.tokenMint });
       addToast(
         data.simulated
           ? "Simulated launch verified (Preview only — no real token exists)."
@@ -105,6 +107,7 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
       setVerifyError("That doesn't look like a valid mint address or bags.fm link.");
       return;
     }
+    track(EVENTS.bagsVerifyStarted);
     verify(mint);
   };
 
@@ -126,6 +129,8 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
       if (!config.walletAuthed) {
         throw new Error("Connect and verify a wallet to launch a Bags token");
       }
+
+      track(EVENTS.bagsLaunchStarted, { mode: config.live ? "live" : "simulated" });
 
       if (!config.live) {
         // Mock path: no bags.fm tab, no Bags API call. Goes straight to a
