@@ -42,6 +42,18 @@ export const RATE_LIMITS = {
   // sits well above loginPerIp — it is an abuse ceiling, not a login throttle.
   refreshPerIp: { key: "refreshPerIp", max: 60, windowSeconds: 15 * MINUTE },
 
+  // ── NFT minting ─────────────────────────────────────────────────────────
+  // A mint costs the user SOL, so abuse is self-limiting on the chain side.
+  // These bound the free work we do around it: DynamoDB writes, RPC calls to
+  // verify, and metadata rows. Sits above uploadPerUser because a single mint
+  // legitimately makes several calls (prepare, two upload advances, confirm)
+  // and a rejected signature is retried.
+  mintPerUser: { key: "mintPerUser", max: 100, windowSeconds: DAY },
+  mintPerIp: { key: "mintPerIp", max: 300, windowSeconds: DAY },
+  // POST /api/nft-metadata was unauthenticated and unlimited: anyone could
+  // write rows into the table indefinitely.
+  nftMetadataPerUser: { key: "nftMetadataPerUser", max: 50, windowSeconds: DAY },
+
   // ── Content report (KAN-43) ─────────────────────────────────────────────
   // Unauthenticated route, so the per-IP ceiling is the only layer that
   // applies to anonymous reporters. Per-user applies in addition when the

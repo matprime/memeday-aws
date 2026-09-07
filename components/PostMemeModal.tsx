@@ -157,7 +157,14 @@ export function PostMemeModal({ onClose }: Props) {
           // The meme row doesn't exist yet, so mint events carry no memeId —
           // they're joined to the upload by session, not by meme.
           track(EVENTS.mintStarted);
-          mintAddress = await mintMemeNft(wallet, walletAddress, imageUrl, caption.trim(), rpcUrl);
+          mintAddress = await mintMemeNft(
+            wallet,
+            walletAddress,
+            imageUrl,
+            caption.trim(),
+            rpcUrl,
+            await requireToken()
+          );
           track(EVENTS.mintConfirmed, { mintAddress });
           addToast("NFT minted on Solana!", "success");
         }

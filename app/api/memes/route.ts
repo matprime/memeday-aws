@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/cognito";
-import { finalizeMeme, getPendingUpload } from "@/lib/db";
+import { finalizeMeme, getMintRequest, getPendingUpload } from "@/lib/db";
 
 export async function POST(req: Request) {
   const userId = await getUserIdFromRequest(req);
@@ -10,7 +10,11 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { pendingId, isNFT, nftMint, listingPrice } = body;
+    // nftMint is deliberately NOT read from the body. It used to be written
+    // verbatim, which let any authenticated caller claim any mint address, or
+    // a fabricated one. The only source now is a mint request this server
+    // verified on-chain (see app/api/mint/confirm + lib/solana/verify-mint).
+    const { pendingId, isNFT, listingPrice } = body;
 
     if (!pendingId) {
       return NextResponse.json({ error: "pendingId is required" }, { status: 400 });
@@ -32,8 +36,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Upload still being validated" }, { status: 425 });
     }
 
+    // assetId === pendingId === the future memeId, so one lookup covers it.
+    const mintRequest = await getMintRequest(pendingId);
+    const verifiedMint =
+      mintRequest?.status === "CONFIRMED" && mintRequest.userId === userId
+        ? mintRequest.mintAddress
+        : undefined;
+
     const meme = await finalizeMeme(pending, {
-      nftMint: nftMint ?? undefined,
+      nftMint: verifiedMint,
       listingPrice: listingPrice ?? undefined,
       isNFT: isNFT ?? false,
     });

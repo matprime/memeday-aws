@@ -938,3 +938,67 @@ export async function confirmMintRequest(
 }
 
 export { MINT_TRANSITIONS };
+
+// Records the verified mint address on an existing meme. Conditional on the
+// attribute being absent so a second confirm — or a reconciliation running
+// alongside one — can never overwrite a mint address that is already there.
+// Returns false when the meme is missing or already carries one, which the
+// caller treats as "nothing to do", not as an error.
+export async function setMemeNftMint(memeId: string, nftMint: string): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+        UpdateExpression: "SET nftMint = :mint",
+        ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(nftMint)",
+        ExpressionAttributeValues: { ":mint": nftMint },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+// Attaches a fresh nonce without moving the request. Separate from
+// transitionMintRequest because a status-to-itself "transition" reads as a
+// mistake and would bypass the transition table's guarantees. The status is
+// still asserted in the condition, so this cannot re-arm a request that moved
+// on (or was confirmed) since it was read.
+export async function refreshMintNonce(
+  assetId: string,
+  expectedStatus: MintStatus,
+  nonce: { nonce: string; nonceExpiresAt: number }
+): Promise<DbMintRequest> {
+  try {
+    const result = await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MINTREQ#${assetId}`, SK: `MINTREQ#${assetId}` },
+        UpdateExpression:
+          "SET #nonce = :nonce, nonceExpiresAt = :exp, updatedAt = :now",
+        ConditionExpression: "attribute_exists(PK) AND #status = :expected",
+        ExpressionAttributeNames: { "#status": "status", "#nonce": "nonce" },
+        ExpressionAttributeValues: {
+          ":nonce": nonce.nonce,
+          ":exp": nonce.nonceExpiresAt,
+          ":now": new Date().toISOString(),
+          ":expected": expectedStatus,
+        },
+        ReturnValues: "ALL_NEW",
+      })
+    );
+    return parseMintRequest(result.Attributes as Record<string, unknown>);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new MintTransitionError(
+        `Cannot refresh nonce for ${assetId}: it is missing or no longer ${expectedStatus}`
+      );
+    }
+    throw err;
+  }
+}

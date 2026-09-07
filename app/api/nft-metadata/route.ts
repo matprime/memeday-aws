@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createNftMetadata } from "@/lib/db";
+import { getUserIdFromRequest } from "@/lib/cognito";
+import { isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 
 function metadataBaseUrl(request: NextRequest): string {
   const env = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
@@ -7,7 +9,18 @@ function metadataBaseUrl(request: NextRequest): string {
   return request.nextUrl.origin;
 }
 
+// Was unauthenticated and unrate-limited: anyone could write rows into the
+// table indefinitely. The GET counterpart stays public on purpose — already
+// minted NFTs carry on-chain uris pointing at it, and those must never break.
 export async function POST(request: NextRequest) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (await isRateLimited("nftMetadataPerUser", userId)) {
+    return rateLimitResponse();
+  }
+
   try {
     const body = await request.json();
     const { name, image, description } = body;

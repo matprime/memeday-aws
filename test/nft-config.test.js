@@ -100,13 +100,19 @@ test("zero retention is rejected — it would expire a request mid-signature", a
   });
 });
 
-test("nonce TTL is shorter than a blockhash lifetime", async () => {
+test("nonce TTL covers a slow upload window", async () => {
   await withEnv({}, async () => {
     const mod = await importConfig();
-    assert.ok(mod.MINT_NONCE_TTL_SECONDS > 0);
-    assert.ok(
-      mod.MINT_NONCE_TTL_SECONDS <= 90,
-      "nonce must expire before the blockhash so we produce the clear error, not the RPC"
-    );
+    // Must outlast uploading a 5MB image plus metadata on a poor connection;
+    // replay is handled by single-use rotation, not by a short TTL.
+    assert.ok(mod.MINT_NONCE_TTL_SECONDS >= 300, "too short to finish an upload");
+    assert.ok(mod.MINT_NONCE_TTL_SECONDS <= 3600, "an abandoned request must still expire");
+  });
+});
+
+test("on-chain uri limit matches what mpl-core stores inline", async () => {
+  await withEnv({}, async () => {
+    const mod = await importConfig();
+    assert.strictEqual(mod.MAX_ON_CHAIN_URI_LEN, 200);
   });
 });

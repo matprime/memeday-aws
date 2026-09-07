@@ -12,7 +12,8 @@ const MAX_ON_CHAIN_URI_LEN = 200;
 
 async function registerMetadataUri(
   imageUrl: string,
-  caption: string
+  caption: string,
+  accessToken: string
 ): Promise<string> {
   const base =
     typeof window !== "undefined"
@@ -21,7 +22,10 @@ async function registerMetadataUri(
 
   const res = await fetch(`${base}/api/nft-metadata`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
     body: JSON.stringify({
       name: caption.slice(0, 32),
       image: imageUrl,
@@ -54,13 +58,14 @@ export async function mintMemeNft(
   _walletAddress: string,
   imageUrl: string,
   caption: string,
-  rpcUrl: string
+  rpcUrl: string,
+  accessToken: string
 ): Promise<string> {
   if (!wallet.connected || !wallet.publicKey) {
     throw new Error("Wallet not connected — reconnect Phantom and try again.");
   }
 
-  const metadataUri = await registerMetadataUri(imageUrl, caption);
+  const metadataUri = await registerMetadataUri(imageUrl, caption, accessToken);
 
   const umi = createUmi(rpcUrl)
     .use(mplCore())

@@ -77,9 +77,19 @@ if (retentionHours === 0) {
 export const NFT_ORPHANED_UPLOAD_RETENTION_HOURS = retentionHours;
 export const NFT_ORPHANED_UPLOAD_RETENTION_SECONDS = retentionHours * 60 * 60;
 
-// How long a prepared mint request stays signable before the client must call
-// /api/mint/prepare again. Bounds replay of a captured prepare response, and
-// is deliberately shorter than a Solana blockhash lifetime (~60-90s) so an
-// expired nonce is caught by us with a clear error rather than by the RPC as
-// an opaque "blockhash not found".
-export const MINT_NONCE_TTL_SECONDS = 60;
+// How long a prepared mint request stays usable before the client must call
+// /api/mint/prepare again. This has to cover the whole prepare -> upload
+// picture -> upload metadata -> ready window, and a 5MB image on a slow
+// connection is not quick, so it is generous.
+//
+// The replay protection does not rest on this being short: the nonce is
+// single-use and rotated on every advance, so a captured one is already spent
+// by the time it could be replayed. The TTL is just a backstop for a request
+// that is abandoned midway. Blockhash expiry is a separate concern enforced by
+// Solana itself, not something this needs to race.
+export const MINT_NONCE_TTL_SECONDS = 15 * 60;
+
+// mpl-core stores the metadata uri inline in the asset account. Enforced on
+// both sides: the client checks before it builds the transaction, the server
+// checks before it records the uri, so an over-long uri cannot reach the chain.
+export const MAX_ON_CHAIN_URI_LEN = 200;
