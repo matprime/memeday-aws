@@ -1,10 +1,11 @@
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { walletAdapterIdentity } from "@metaplex-foundation/umi-signer-wallet-adapters";
 import { create, mplCore, ruleSet } from "@metaplex-foundation/mpl-core";
-import { irysUploader } from "@metaplex-foundation/umi-uploader-irys/web";
+import { irysUploader, type IrysUploader } from "@metaplex-foundation/umi-uploader-irys/web";
 import {
   base58,
   createGenericFile,
+  multiplyAmount,
   generateSigner,
   publicKey,
   type GenericFile,
@@ -68,6 +69,10 @@ export interface MintParams {
   royaltyBasisPoints: number;
   getToken: () => Promise<string>;
   onStage?: (stage: MintStatus) => void;
+  // Both optional, and both only worth passing when the caller started the
+  // storage payment early — see createMintUmi and prefundStorage.
+  umi?: Umi;
+  storageReady?: Promise<unknown>;
 }
 
 // The wire shape of every /api/mint/* response we care about.
@@ -141,6 +146,60 @@ async function fetchPicture(imageUrl: string): Promise<GenericFile> {
   return createGenericFile(bytes, `meme.${extension}`, { contentType });
 }
 
+// Built here rather than inside mintMemeNft so the caller can create it early
+// and start paying for storage while the image is still being validated.
+export function createMintUmi(
+  wallet: WalletContextState,
+  rpcUrl: string,
+  network: SolanaNetwork
+): Umi {
+  const umi = createUmi(rpcUrl)
+    .use(mplCore())
+    .use(walletAdapterIdentity(wallet as any))
+    .use(irysUploader({ address: IRYS_NODE[network] }));
+
+  // umi's confirmTransaction delegates to web3.js Connection.confirmTransaction,
+  // which waits on a signatureSubscribe WebSocket. rpcUrl points at our
+  // /api/rpc proxy (a serverless route that cannot hold a socket open), so that
+  // subscription never fires and a landed mint would still time out. Swap in the
+  // HTTP polling used by the tip path — see lib/solana/confirm.ts.
+  // Exposed as a getter by umi-rpc-web3js but absent from the RpcInterface type.
+  const web3Connection = (umi.rpc as unknown as { connection: Connection }).connection;
+  umi.rpc.confirmTransaction = async (signature, options) => {
+    const sig = base58.deserialize(signature)[0];
+    await pollSignatureConfirmation(web3Connection, sig, options.commitment);
+    return { context: { slot: await web3Connection.getSlot() }, value: { err: null } };
+  };
+  return umi;
+}
+
+// The slowest thing in the whole flow, by a wide margin: the upload cannot
+// start until the wallet's Irys balance covers it, and that means a transaction
+// confirming and then the Irys node crediting it — around 40 seconds.
+//
+// Two changes to that. It is startable before the image has finished
+// validating, since the price depends only on the byte count. And it tops up
+// several uploads' worth at once, so the next mint from this wallet finds a
+// balance already there and skips the payment entirely: one approval instead of
+// two, and none of the wait. The balance is the user's own and stays theirs.
+const FUND_UPLOADS_AHEAD = 5;
+// A ceiling on what one top-up may ask for, so an unexpected price never turns
+// into a surprise charge. Roughly the rent of a single mint.
+const MAX_FUND_LAMPORTS = BigInt(4_000_000);
+
+export async function prefundStorage(umi: Umi, bytes: number): Promise<void> {
+  const uploader = umi.uploader as IrysUploader;
+  const price = await uploader.getUploadPriceFromBytes(bytes);
+  const balance = await uploader.getBalance();
+  if (balance.basisPoints >= price.basisPoints) return;
+
+  const target = multiplyAmount(price, FUND_UPLOADS_AHEAD);
+  const capped = target.basisPoints > MAX_FUND_LAMPORTS ? price : target;
+  // fund() subtracts the existing balance itself, so this asks only for the
+  // difference and does nothing when the balance already covers it.
+  await uploader.fund(capped, false);
+}
+
 export async function mintMemeNft(params: MintParams): Promise<MintResult> {
   const {
     wallet,
@@ -205,23 +264,7 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
     nonce = data.nonce;
   };
 
-  const umi = createUmi(rpcUrl)
-    .use(mplCore())
-    .use(walletAdapterIdentity(wallet as any))
-    .use(irysUploader({ address: IRYS_NODE[network] }));
-
-  // umi's confirmTransaction delegates to web3.js Connection.confirmTransaction,
-  // which waits on a signatureSubscribe WebSocket. rpcUrl points at our
-  // /api/rpc proxy (a serverless route that cannot hold a socket open), so that
-  // subscription never fires and a landed mint would still time out. Swap in the
-  // HTTP polling used by the tip path — see lib/solana/confirm.ts.
-  // Exposed as a getter by umi-rpc-web3js but absent from the RpcInterface type.
-  const web3Connection = (umi.rpc as unknown as { connection: Connection }).connection;
-  umi.rpc.confirmTransaction = async (signature, options) => {
-    const sig = base58.deserialize(signature)[0];
-    await pollSignatureConfirmation(web3Connection, sig, options.commitment);
-    return { context: { slot: await web3Connection.getSlot() }, value: { err: null } };
-  };
+  const umi = params.umi ?? createMintUmi(wallet, rpcUrl, network);
 
   // 2. Picture. Skipped when a previous attempt already stored it — the user
   // has paid for that storage once and must not pay again on a retry.
@@ -231,6 +274,10 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
     // flight: it is the largest download in the flow and does not depend on it.
     const picture = storageProvider === "irys" ? fetchPicture(imageUrl) : null;
     await advance("UPLOADING_PICTURE");
+    // Whatever the caller started earlier has to be done before the upload,
+    // and its failures belong to the user here rather than to an unhandled
+    // rejection somewhere behind the modal.
+    if (params.storageReady) await params.storageReady;
     const pictureUri = picture
       ? (await umi.uploader.upload([await picture]))[0]
       : imageUrl;

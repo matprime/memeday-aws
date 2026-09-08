@@ -7,7 +7,7 @@ import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
-import { mintMemeNft } from "@/lib/nft";
+import { createMintUmi, mintMemeNft, prefundStorage } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
 import type { MintStatus } from "@/lib/types";
@@ -19,9 +19,9 @@ import type { MintStatus } from "@/lib/types";
 // costs a payment and a signature, then the mint itself.
 const MINT_STEP_LABELS: Record<string, string> = {
   PENDING: "Preparing mint…",
-  UPLOADING_PICTURE: "Storing image on Arweave… (approvals 1 and 2 of 3)",
+  UPLOADING_PICTURE: "Storing image on Arweave… (approve in wallet)",
   UPLOADING_METADATA: "Preparing NFT metadata…",
-  AWAITING_SIGNATURE: "Minting NFT on Solana… (approval 3 of 3)",
+  AWAITING_SIGNATURE: "Minting NFT on Solana… (approve in wallet)",
   MINTING: "Confirming on-chain…",
 };
 
@@ -125,7 +125,7 @@ export function PostMemeModal({ onClose }: Props) {
   // ObjectCreated event). Poll until it flips the pending record to active or
   // rejected before proceeding — the meme can't be finalized until then.
   const waitForValidation = async (pendingId: string): Promise<void> => {
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 16; attempt++) {
       const res = await fetch(`/api/upload-status/${pendingId}`, {
         headers: { Authorization: `Bearer ${await requireToken()}` },
       });
@@ -135,7 +135,10 @@ export function PostMemeModal({ onClose }: Props) {
       if (status === "rejected") {
         throw new Error(reason ? `Upload rejected: ${reason}` : "Upload rejected");
       }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Tight at first: the Lambda usually answers within a second or two, and
+      // a fixed 1.5s poll spent most of its time waiting on an answer that was
+      // already there. Backs off so a slow validation still gets ~15s.
+      await new Promise((resolve) => setTimeout(resolve, attempt < 6 ? 400 : 1500));
     }
     throw new Error("Upload validation timed out — please try again");
   };
@@ -146,6 +149,22 @@ export function PostMemeModal({ onClose }: Props) {
 
     try {
       const walletAddress = publicKey?.toBase58() ?? "";
+
+      // Paying for Arweave storage is the slowest step in a mint — a
+      // transaction confirming, then the Irys node crediting it — and it needs
+      // nothing but the file's size. Started here, it runs while the image
+      // uploads and the validation Lambda screens it, instead of after.
+      const willMint = isNFT && enabled && authMethod === "wallet";
+      const mintUmi =
+        willMint && storageProvider === "irys"
+          ? createMintUmi(wallet, rpcUrl, network)
+          : undefined;
+      const storageReady = mintUmi
+        ? prefundStorage(mintUmi, selectedImage.size)
+        : undefined;
+      // Awaited inside mintMemeNft, where a failure becomes the user's error;
+      // this only stops it counting as unhandled in the meantime.
+      storageReady?.catch(() => {});
 
       // 1. Upload image to S3 via presigned URL
       setStep("uploading");
@@ -173,6 +192,7 @@ export function PostMemeModal({ onClose }: Props) {
           // The meme row doesn't exist yet, so mint events carry no memeId —
           // they're joined to the upload by session, not by meme.
           track(EVENTS.mintStarted);
+          const mintStartedAt = Date.now();
           try {
             const result = await mintMemeNft({
               wallet,
@@ -185,9 +205,16 @@ export function PostMemeModal({ onClose }: Props) {
               royaltyBasisPoints,
               getToken: requireToken,
               onStage: setMintStatus,
+              umi: mintUmi,
+              storageReady,
             });
             mintAddress = result.mintAddress;
-            track(EVENTS.mintConfirmed, { mintAddress });
+            track(EVENTS.mintConfirmed, {
+              mintAddress,
+              // How long the mint actually took, so the friction is measured
+              // rather than estimated from what someone happened to notice.
+              durationMs: Date.now() - mintStartedAt,
+            });
             addToast("NFT minted on Solana!", "success");
           } catch (err) {
             // A failed mint never costs the user their post. The image is
@@ -372,7 +399,7 @@ export function PostMemeModal({ onClose }: Props) {
             <div className="space-y-3">
               <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
                 {storageProvider === "irys"
-                  ? "Your wallet will ask for 3 approvals (store image on Arweave, upload signature, then mint), ~1 min."
+                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. The credit covers several uploads, so later mints skip that step."
                   : "Your wallet will ask for 1 approval: the mint itself."}
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>
