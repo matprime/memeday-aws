@@ -7,7 +7,7 @@ import {
   sanitizeError,
   toMintResponse,
 } from "@/lib/mint-service";
-import { isValidSolanaAddress } from "@/lib/solana/verify-mint";
+import { isValidSolanaAddress, verifyMetadataDocument } from "@/lib/solana/verify-mint";
 import { MAX_ON_CHAIN_URI_LEN } from "@/lib/nft-config";
 import { SOLANA_ENABLED, SOLANA_DISABLED_MESSAGE } from "@/lib/solana/network";
 import type { MintStatus } from "@/lib/types";
@@ -109,6 +109,22 @@ export async function POST(request: NextRequest) {
     if (problem) return NextResponse.json({ error: `metadataUri: ${problem}` }, { status: 400 });
     if (!isValidSolanaAddress(assetAddress)) {
       return NextResponse.json({ error: "Invalid assetAddress" }, { status: 400 });
+    }
+    // The same check confirm runs, but before the wallet is asked rather than
+    // after the mint is paid for. Every verification failure so far has been a
+    // metadata document the server could not read — a shell-style
+    // NEXT_PUBLIC_APP_URL, then a preview deployment behind Vercel's SSO — and
+    // in both cases the asset was already minted, immutable, and broken. This
+    // is the last point at which that costs nothing.
+    const objection = await verifyMetadataDocument(
+      metadataUri as string,
+      existing.pictureUri ?? ""
+    );
+    if (objection && objection.outcome === "rejected") {
+      return NextResponse.json(
+        { error: "The metadata for this mint is not readable", reason: objection.reason },
+        { status: 422 }
+      );
     }
     patch.metadataUri = metadataUri as string;
     patch.assetAddress = assetAddress as string;

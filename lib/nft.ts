@@ -191,7 +191,13 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
       advance: to,
       ...patch,
     });
-    if (status !== 200) throw apiError(data, "Could not record the mint progress");
+    if (status !== 200) {
+      // 422 is the server refusing to let an unreadable metadata document
+      // reach the chain. Its code says which check failed, and it arrives
+      // before the wallet is asked, so nothing has been paid.
+      if (data.reason) throw new Error(`${data.error ?? "Mint check failed"} (${data.reason})`);
+      throw apiError(data, "Could not record the mint progress");
+    }
     state = { ...state, ...data };
     nonce = data.nonce;
   };

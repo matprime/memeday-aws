@@ -309,3 +309,23 @@ test(
     assert.ok(["ASSET_NOT_FOUND", "RPC_UNAVAILABLE"].includes(verdict.reason));
   }
 );
+
+// Both devnet verification failures so far were unreadable metadata: first a
+// literal "https://$VERCEL_URL", then a preview deployment behind Vercel's SSO
+// redirect. Neither returns JSON, and the asset was already minted and
+// immutable by the time confirm found out.
+test("metadata that is not a readable JSON document is rejected", async () => {
+  const { verifyMetadataDocument } = await importTs("lib", "solana", "verify-mint.ts");
+
+  // Serves HTML, not JSON — the shape every SSO/interstitial failure takes.
+  const html = await verifyMetadataDocument("https://example.com/", "https://example.test/a.png");
+  assert.strictEqual(html?.outcome, "rejected");
+  assert.strictEqual(html?.reason, "METADATA_UNREACHABLE");
+
+  const unresolvable = await verifyMetadataDocument(
+    "https://$VERCEL_URL/api/nft-metadata/abc",
+    "https://example.test/a.png"
+  );
+  assert.strictEqual(unresolvable?.outcome, "rejected");
+  assert.strictEqual(unresolvable?.reason, "METADATA_UNREACHABLE");
+});
