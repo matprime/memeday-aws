@@ -12,14 +12,16 @@ import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
 import type { MintStatus } from "@/lib/types";
 
-// The mint is several server round-trips and two uploads before the wallet is
+// The mint is several server round-trips and an upload before the wallet is
 // even asked, so the label follows the mint request's own status rather than
-// claiming "approve in wallet" for the whole minute.
+// claiming "approve in wallet" for the whole minute. The approval numbers match
+// the count promised before the user starts — storing the image on Arweave
+// costs a payment and a signature, then the mint itself.
 const MINT_STEP_LABELS: Record<string, string> = {
   PENDING: "Preparing mint…",
-  UPLOADING_PICTURE: "Storing image permanently…",
-  UPLOADING_METADATA: "Storing NFT metadata…",
-  AWAITING_SIGNATURE: "Minting NFT on Solana… (approve in wallet)",
+  UPLOADING_PICTURE: "Storing image on Arweave… (approvals 1 and 2 of 3)",
+  UPLOADING_METADATA: "Preparing NFT metadata…",
+  AWAITING_SIGNATURE: "Minting NFT on Solana… (approval 3 of 3)",
   MINTING: "Confirming on-chain…",
 };
 
@@ -362,7 +364,12 @@ export function PostMemeModal({ onClose }: Props) {
           </div>
 
           {isNFT && (
-            <div>
+            <div className="space-y-3">
+              <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
+                {storageProvider === "irys"
+                  ? "Your wallet will ask for 3 approvals: a payment to store the image permanently on Arweave, a signature for the upload itself, then the mint. Expect around a minute."
+                  : "Your wallet will ask for 1 approval: the mint itself."}
+              </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>
               <input
                 type="number"

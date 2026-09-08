@@ -7,6 +7,7 @@ import {
   createGenericFile,
   generateSigner,
   publicKey,
+  type GenericFile,
   type KeypairSigner,
   type Umi,
 } from "@metaplex-foundation/umi";
@@ -100,9 +101,9 @@ function apiError(data: MintRequestResponse, fallback: string): Error {
   return new Error(data.error ?? fallback);
 }
 
-// s3 provider: the picture already lives on CloudFront and the metadata
-// document is served by /api/nft-metadata. This is the pre-existing behaviour
-// and costs the user nothing beyond the mint itself.
+// The metadata document, served by /api/nft-metadata, for both providers. Its
+// image field is what the verifier compares against the picture uri the server
+// stored, so it is written from that value and nothing else.
 async function registerMetadataUri(
   imageUri: string,
   caption: string,
@@ -128,16 +129,13 @@ async function registerMetadataUri(
 // Source is the CloudFront URL rather than the File the user picked: that
 // object has already been through the S3Handler Lambda's sharp validation, so
 // pinning it is what keeps the moderation gate in front of permanent storage.
-async function uploadPictureToIrys(umi: Umi, imageUrl: string): Promise<string> {
+async function fetchPicture(imageUrl: string): Promise<GenericFile> {
   const res = await fetch(imageUrl, { cache: "no-store" });
   if (!res.ok) throw new Error("Could not read the uploaded image for minting");
   const contentType = res.headers.get("content-type") ?? "image/jpeg";
   const bytes = new Uint8Array(await res.arrayBuffer());
   const extension = contentType === "image/png" ? "png" : "jpg";
-  const [uri] = await umi.uploader.upload([
-    createGenericFile(bytes, `meme.${extension}`, { contentType }),
-  ]);
-  return uri;
+  return createGenericFile(bytes, `meme.${extension}`, { contentType });
 }
 
 export async function mintMemeNft(params: MintParams): Promise<MintResult> {
@@ -217,11 +215,13 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
   // has paid for that storage once and must not pay again on a retry.
   if (!state.pictureUri) {
     onStage?.("UPLOADING_PICTURE");
+    // The image is read from CloudFront while the status round-trip is in
+    // flight: it is the largest download in the flow and does not depend on it.
+    const picture = storageProvider === "irys" ? fetchPicture(imageUrl) : null;
     await advance("UPLOADING_PICTURE");
-    const pictureUri =
-      storageProvider === "irys"
-        ? await uploadPictureToIrys(umi, imageUrl)
-        : imageUrl;
+    const pictureUri = picture
+      ? (await umi.uploader.upload([await picture]))[0]
+      : imageUrl;
     await advance("UPLOADING_METADATA", {
       pictureUri: checkUri(pictureUri, "Image URI"),
     });
@@ -237,15 +237,12 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
   // found on-chain without the transaction signature.
   if (!state.metadataUri || state.status === "UPLOADING_METADATA") {
     onStage?.("UPLOADING_METADATA");
-    const token = await getToken();
-    const metadataUri =
-      storageProvider === "irys"
-        ? await umi.uploader.uploadJson({
-            name: onChainName(caption),
-            description: "Meme NFT — MemeDay on Solana",
-            image: pictureUri,
-          })
-        : await registerMetadataUri(pictureUri, caption, token);
+    // Deliberately not a second Irys upload. Each one tops the wallet's Irys
+    // balance up with its own on-chain transaction and signs its own data
+    // item, so putting a 1KB JSON there cost two extra wallet prompts and the
+    // wait for another confirmation — for a document we can serve ourselves.
+    // The picture, which is the part that must outlive us, stays on Arweave.
+    const metadataUri = await registerMetadataUri(pictureUri, caption, await getToken());
     const asset = generateSigner(umi);
     await advance("AWAITING_SIGNATURE", {
       metadataUri: checkUri(metadataUri, "Metadata URI"),
