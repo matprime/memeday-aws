@@ -7,9 +7,21 @@ import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
-import { mintMemeNft } from "@/lib/nft";
+import { MintPendingError, MintSignatureRejectedError, mintMemeNft } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
+import type { MintStatus } from "@/lib/types";
+
+// The mint is several server round-trips and two uploads before the wallet is
+// even asked, so the label follows the mint request's own status rather than
+// claiming "approve in wallet" for the whole minute.
+const MINT_STEP_LABELS: Record<string, string> = {
+  PENDING: "Preparing mint…",
+  UPLOADING_PICTURE: "Storing image permanently…",
+  UPLOADING_METADATA: "Storing NFT metadata…",
+  AWAITING_SIGNATURE: "Minting NFT on Solana… (approve in wallet)",
+  MINTING: "Confirming on-chain…",
+};
 
 interface Props {
   onClose: () => void;
@@ -17,7 +29,8 @@ interface Props {
 
 export function PostMemeModal({ onClose }: Props) {
   const router = useRouter();
-  const { rpcUrl, enabled, disabledMessage } = useSolanaConfig();
+  const { rpcUrl, enabled, disabledMessage, network, storageProvider, royaltyBasisPoints } =
+    useSolanaConfig();
   const wallet = useWallet();
   const { publicKey } = wallet;
   const { cognitoToken, authMethod, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
@@ -31,6 +44,7 @@ export function PostMemeModal({ onClose }: Props) {
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<"form" | "uploading" | "validating" | "minting" | "creating">("form");
+  const [mintStatus, setMintStatus] = useState<MintStatus | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -157,16 +171,34 @@ export function PostMemeModal({ onClose }: Props) {
           // The meme row doesn't exist yet, so mint events carry no memeId —
           // they're joined to the upload by session, not by meme.
           track(EVENTS.mintStarted);
-          mintAddress = await mintMemeNft(
-            wallet,
-            walletAddress,
-            imageUrl,
-            caption.trim(),
-            rpcUrl,
-            await requireToken()
-          );
-          track(EVENTS.mintConfirmed, { mintAddress });
-          addToast("NFT minted on Solana!", "success");
+          try {
+            const result = await mintMemeNft({
+              wallet,
+              assetId: pendingId,
+              imageUrl,
+              caption: caption.trim(),
+              rpcUrl,
+              network,
+              storageProvider,
+              royaltyBasisPoints,
+              getToken: requireToken,
+              onStage: setMintStatus,
+            });
+            mintAddress = result.mintAddress;
+            track(EVENTS.mintConfirmed, { mintAddress });
+            addToast("NFT minted on Solana!", "success");
+          } catch (err) {
+            // A declined signature and an unconfirmed-but-submitted mint both
+            // leave the mint request alive, so the meme is still posted — the
+            // mint is not silently discarded, it just is not recorded yet.
+            if (err instanceof MintSignatureRejectedError || err instanceof MintPendingError) {
+              addToast(err.message, "error");
+            } else {
+              throw err;
+            }
+          } finally {
+            setMintStatus(null);
+          }
         }
       }
 
@@ -236,7 +268,7 @@ export function PostMemeModal({ onClose }: Props) {
   const stepLabel =
     step === "uploading" ? "Uploading image…" :
     step === "validating" ? "Validating image…" :
-    step === "minting" ? "Minting NFT on Solana… (approve in wallet)" :
+    step === "minting" ? MINT_STEP_LABELS[mintStatus ?? "PENDING"] :
     "Creating on Bags & posting…";
 
   return (

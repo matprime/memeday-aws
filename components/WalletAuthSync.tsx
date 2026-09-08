@@ -86,6 +86,19 @@ export function WalletAuthSync() {
         if (!useAppStore.getState().cognitoToken) {
           setCognitoToken(accessToken, "wallet");
           if (isNewUser) track(EVENTS.signupCompleted, { method: "wallet" });
+          // Mirrors what EmailAuthModal does with the email: the Cognito user
+          // carries the wallet, but the user item is what /api/mint/prepare
+          // checks the mint's owner wallet against, and until this call it does
+          // not exist. Without it a wallet user's first mint is refused as an
+          // unlinked wallet.
+          await fetch("/api/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ walletAddr: walletAddress }),
+          });
         }
       } catch (err) {
         addToast(
