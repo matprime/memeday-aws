@@ -42,6 +42,7 @@ export function PostMemeModal({ onClose }: Props) {
   const [isNFT, setIsNFT] = useState(false);
   const [nftPrice, setNftPrice] = useState("0.01");
   const [tokenSymbol, setTokenSymbol] = useState("");
+  const [launchToken, setLaunchToken] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -233,7 +234,7 @@ export function PostMemeModal({ onClose }: Props) {
       let projectId = myBagsProjectId;
       let createdTokenSymbol: string | null = null;
 
-      if (!hasCreatorToken && tokenSymbol && authMethod === "wallet") {
+      if (!hasCreatorToken && launchToken && tokenSymbol && authMethod === "wallet") {
         const project = await createBagsProject(walletAddress, caption.slice(0, 20));
         projectId = project.projectId;
         emitBagsEvent({ type: "project_created", projectId: project.projectId });
@@ -399,7 +400,7 @@ export function PostMemeModal({ onClose }: Props) {
             <div className="space-y-3">
               <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
                 {storageProvider === "irys"
-                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. The credit covers several uploads, so later mints skip that step."
+                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. The credit covers several uploads, so later mints skip the top-up and ask twice."
                   : "Your wallet will ask for 1 approval: the mint itself."}
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>
@@ -416,24 +417,45 @@ export function PostMemeModal({ onClose }: Props) {
 
           {!hasCreatorToken && authMethod === "wallet" && (
             <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Zap size={16} className="text-bags" />
-                <p className="text-sm font-bold text-bags">Launch Your Creator Token on Bags</p>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Zap size={16} className="text-bags" />
+                    <p className="text-sm font-bold text-bags">Launch Your Creator Token on Bags</p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Create a fungible creator token on Bags. Fans can invest in you directly.
+                  </p>
+                </div>
+                {/* Launching a token is a one-time, irreversible act, so it takes
+                    a deliberate toggle. A symbol sitting in the field was enough
+                    on its own before, which a browser autofill could supply. */}
+                <button
+                  type="button"
+                  onClick={() => setLaunchToken(!launchToken)}
+                  className={`w-11 h-6 flex-shrink-0 rounded-full transition-colors relative ${launchToken ? "bg-bags" : "bg-gray-700"}`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${launchToken ? "translate-x-5" : "translate-x-0.5"}`}
+                  />
+                </button>
               </div>
-              <p className="text-xs text-gray-400 mb-3">
-                Create a fungible creator token on Bags. Fans can invest in you directly.
-              </p>
-              <label className="text-xs text-gray-400 mb-1.5 block font-medium">
-                Token Symbol (2-6 chars, e.g. MLRD)
-              </label>
-              <input
-                type="text"
-                value={tokenSymbol}
-                onChange={(e) => setTokenSymbol(e.target.value.toUpperCase().slice(0, 6))}
-                placeholder="MYTKN"
-                maxLength={6}
-                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-bags placeholder:text-gray-600"
-              />
+              {launchToken && (
+                <div className="mt-3">
+                  <label className="text-xs text-gray-400 mb-1.5 block font-medium">
+                    Token Symbol (2-6 chars, e.g. MLRD)
+                  </label>
+                  <input
+                    type="text"
+                    value={tokenSymbol}
+                    onChange={(e) => setTokenSymbol(e.target.value.toUpperCase().slice(0, 6))}
+                    placeholder="MYTKN"
+                    maxLength={6}
+                    autoComplete="off"
+                    className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-bags placeholder:text-gray-600"
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -468,7 +490,7 @@ export function PostMemeModal({ onClose }: Props) {
               disabled={!caption.trim() || !selectedImage || !cognitoToken}
               className="w-full py-3.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
-              Post Meme{!hasCreatorToken && tokenSymbol && authMethod === "wallet" ? " & Launch Token" : ""}
+              Post Meme{!hasCreatorToken && launchToken && tokenSymbol && authMethod === "wallet" ? " & Launch Token" : ""}
             </button>
           )}
         </div>
