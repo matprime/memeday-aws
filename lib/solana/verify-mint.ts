@@ -115,19 +115,34 @@ export async function verifyAssetOnChain(
 // The on-chain uri is just a string; it proves nothing about what that
 // document says. Fetching it is what stops a client uploading metadata that
 // points at an entirely different image from the one we validated and stored.
+// One retry, because this runs seconds after the document is published and a
+// just-written document is the normal case here, not an edge case: a CDN or an
+// Arweave gateway that has not caught up yet is a wait, not a verdict. Anything
+// still unreadable after it is treated as unreadable.
+async function fetchMetadata(metadataUri: string): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(metadataUri, {
+        // A gateway that hangs must not hold a serverless invocation open.
+        signal: AbortSignal.timeout(10_000),
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      if (attempt === 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  }
+}
+
 export async function verifyMetadataDocument(
   metadataUri: string,
   expectedImageUri: string
 ): Promise<MintVerificationResult | null> {
   let doc: unknown;
   try {
-    const res = await fetch(metadataUri, {
-      // A gateway that hangs must not hold a serverless invocation open.
-      signal: AbortSignal.timeout(10_000),
-      cache: "no-store",
-    });
-    if (!res.ok) return { outcome: "rejected", reason: "METADATA_UNREACHABLE" };
-    doc = await res.json();
+    doc = await fetchMetadata(metadataUri);
   } catch {
     return { outcome: "rejected", reason: "METADATA_UNREACHABLE" };
   }

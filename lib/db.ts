@@ -527,6 +527,12 @@ export async function getNftMetadata(id: string): Promise<NftMetadataRow | null>
     new GetCommand({
       TableName: TABLE,
       Key: { PK: `NFTMETA#${id}`, SK: `NFTMETA#${id}` },
+      // Strongly consistent because this document is read back within a second
+      // of being written — the mint flow registers it and then immediately
+      // checks it is readable before asking for a signature. A default read
+      // missed a row written 300ms earlier and reported the metadata as
+      // unreachable on a mint that was otherwise fine.
+      ConsistentRead: true,
     })
   );
   if (!result.Item) return null;
