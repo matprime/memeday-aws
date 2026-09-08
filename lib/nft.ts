@@ -80,6 +80,9 @@ interface MintRequestResponse {
   mintAddress?: string;
   transactionSignature?: string;
   error?: string;
+  // Set on a 422: the verifier's coded objection (URI_MISMATCH,
+  // METADATA_UNREACHABLE, ROYALTY_MISMATCH, …). Never provider text.
+  reason?: string;
   pending?: boolean;
 }
 
@@ -346,5 +349,8 @@ async function confirmWithServer(
     return { mintAddress: data.mintAddress, signature: data.transactionSignature ?? signature };
   }
   if (status === 202) throw new MintPendingError(assetId);
+  if (data.reason) {
+    throw new Error(`The mint could not be verified on-chain (${data.reason})`);
+  }
   throw apiError(data, "The mint could not be verified on-chain");
 }

@@ -23,6 +23,18 @@ export function checkUri(uri: string, label: string): string {
   if (uri.length > MAX_ON_CHAIN_URI_LEN) {
     throw new Error(`${label} is too long (${uri.length} chars, max ${MAX_ON_CHAIN_URI_LEN})`);
   }
+  // Checked here as well as server-side because this one is worth catching
+  // before the user pays: the uri goes into an ImmutableMetadata asset, so an
+  // unresolvable host is a permanently broken NFT, not a retryable error.
+  let host: string;
+  try {
+    host = new URL(uri).hostname;
+  } catch {
+    throw new Error(`${label} is not a valid URL`);
+  }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) {
+    throw new Error(`${label} points at "${host}", which is not a resolvable domain`);
+  }
   return uri;
 }
 

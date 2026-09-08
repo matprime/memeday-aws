@@ -35,6 +35,19 @@ function invalidUri(uri: unknown): string | null {
   if (uri.length > MAX_ON_CHAIN_URI_LEN) {
     return `uri is too long (max ${MAX_ON_CHAIN_URI_LEN} characters)`;
   }
+  // The uri is written into an ImmutableMetadata asset, so an unresolvable one
+  // is permanent. A deployment with NEXT_PUBLIC_APP_URL set to the literal
+  // "https://$VERCEL_URL" produced exactly that: it passed every check above
+  // and minted an NFT whose metadata can never be fetched by anyone.
+  let host: string;
+  try {
+    host = new URL(uri).hostname;
+  } catch {
+    return "uri is not a valid URL";
+  }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) {
+    return "uri host is not a resolvable domain";
+  }
   return null;
 }
 

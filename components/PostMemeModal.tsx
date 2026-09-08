@@ -7,7 +7,7 @@ import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
 import { createBagsProject, createBagsToken } from "@/lib/bags";
-import { MintPendingError, MintSignatureRejectedError, mintMemeNft } from "@/lib/nft";
+import { mintMemeNft } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
 import type { MintStatus } from "@/lib/types";
@@ -190,14 +190,11 @@ export function PostMemeModal({ onClose }: Props) {
             track(EVENTS.mintConfirmed, { mintAddress });
             addToast("NFT minted on Solana!", "success");
           } catch (err) {
-            // A declined signature and an unconfirmed-but-submitted mint both
-            // leave the mint request alive, so the meme is still posted — the
-            // mint is not silently discarded, it just is not recorded yet.
-            if (err instanceof MintSignatureRejectedError || err instanceof MintPendingError) {
-              addToast(err.message, "error");
-            } else {
-              throw err;
-            }
+            // A failed mint never costs the user their post. The image is
+            // already uploaded and validated, so discarding it here would lose
+            // that too — on top of whatever the mint already cost them. The
+            // meme goes up un-minted and the reason is shown.
+            addToast(err instanceof Error ? err.message : "Minting failed", "error");
           } finally {
             setMintStatus(null);
           }
@@ -367,7 +364,7 @@ export function PostMemeModal({ onClose }: Props) {
             <div className="space-y-3">
               <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
                 {storageProvider === "irys"
-                  ? "Your wallet will ask for 3 approvals: a payment to store the image permanently on Arweave, a signature for the upload itself, then the mint. Expect around a minute."
+                  ? "Your wallet will ask for 3 approvals (store image on Arweave, upload signature, then mint), ~1 min."
                   : "Your wallet will ask for 1 approval: the mint itself."}
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>

@@ -51,6 +51,24 @@ test("mint client: uris that cannot go on-chain are rejected before the wallet i
   assert.equal(MAX_ON_CHAIN_URI_LEN, 200);
 });
 
+// A deployment with NEXT_PUBLIC_APP_URL set to the literal "https://$VERCEL_URL"
+// minted an asset whose metadata uri no one can resolve. ImmutableMetadata means
+// that NFT is permanently broken, so the check has to happen before the mint.
+test("mint client: a uri whose host cannot resolve is refused before the wallet is asked", async () => {
+  const { checkUri } = await load();
+
+  assert.throws(() => checkUri("https://$VERCEL_URL/api/nft-metadata/abc", "Metadata URI"), /resolvable/);
+  assert.throws(() => checkUri("https://localhost:3000/api/nft-metadata/abc", "Metadata URI"), /resolvable/);
+  assert.throws(() => checkUri("https:///api/nft-metadata/abc", "Metadata URI"), /resolvable|valid URL/);
+
+  const real = "https://memeday.vercel.app/api/nft-metadata/abc";
+  assert.equal(checkUri(real, "Metadata URI"), real);
+  assert.equal(
+    checkUri("https://gateway.irys.xyz/xyz", "Image URI"),
+    "https://gateway.irys.xyz/xyz"
+  );
+});
+
 // The verifier compares the on-chain name against the server's own truncation
 // (lib/mint-service.ts). If the two ever disagree the mint is rejected as
 // NAME_MISMATCH after the user has already paid for it.
