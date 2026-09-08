@@ -121,8 +121,15 @@ export async function POST(request: NextRequest) {
       existing.pictureUri ?? ""
     );
     if (objection && objection.outcome === "rejected") {
+      // The uri is named because it is ours, carries no secret, and is the one
+      // thing that turns this failure from a guess into a fact: which host
+      // served the answer is exactly what has been ambiguous each time.
       return NextResponse.json(
-        { error: "The metadata for this mint is not readable", reason: objection.reason },
+        {
+          error: "The metadata for this mint is not readable",
+          reason: objection.reason,
+          metadataUri,
+        },
         { status: 422 }
       );
     }

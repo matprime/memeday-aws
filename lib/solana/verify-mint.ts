@@ -128,8 +128,12 @@ async function fetchMetadata(
   metadataUri: string
 ): Promise<{ doc: unknown } | { failure: MintVerificationFailure }> {
   let failure: MintVerificationFailure = "METADATA_UNREACHABLE";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
+  // Three tries with a growing gap. The document may be served by a different
+  // deployment than the one that wrote it, so "not there yet" can outlast a
+  // single one-second wait, and every attempt here is cheaper than a mint that
+  // has to be refused.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
     let res: Response;
     try {
       res = await fetch(metadataUri, {

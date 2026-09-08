@@ -273,14 +273,22 @@ export function PostMemeModal({ onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      // Locked while posting. The flow keeps running after the modal unmounts —
+      // uploads, wallet prompts and the mint all continue — so a stray click on
+      // the backdrop left the user with approvals appearing for a dialog that
+      // was no longer there.
+      onClick={(e) => {
+        if (loading) return;
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div className="bg-surface border border-border rounded-2xl w-full max-w-lg animate-slide-up shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-surface z-10">
           <h2 className="font-bold text-white text-lg">Post a Meme</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+            disabled={loading}
+            className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
           >
             <X size={18} />
           </button>
