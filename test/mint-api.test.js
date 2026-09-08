@@ -356,3 +356,41 @@ test("metadata that is not a readable JSON document is rejected", async () => {
   assert.strictEqual(unresolvable?.outcome, "rejected");
   assert.strictEqual(unresolvable?.reason, "METADATA_UNREACHABLE");
 });
+
+// The metadata uri is minted into an immutable asset, so it has to point at a
+// deployment that can actually serve the row being written. A preview writing
+// to the dev table while NEXT_PUBLIC_APP_URL named production — which reads the
+// prod table — produced a uri that 404s permanently.
+test("a preview deployment never stamps another host onto a metadata uri", async () => {
+  const { NextRequest } = await import("next/server.js");
+  const { metadataBaseUrl } = await importTs("lib", "metadata-url.ts");
+
+  const previewRequest = new NextRequest("https://memeday-preview.vercel.app/api/nft-metadata");
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const vercelEnv = process.env.VERCEL_ENV;
+  try {
+    process.env.NEXT_PUBLIC_APP_URL = "https://memeday-aws-flame.vercel.app/";
+
+    process.env.VERCEL_ENV = "preview";
+    assert.strictEqual(metadataBaseUrl(previewRequest), "https://memeday-preview.vercel.app");
+
+    // Production is where a canonical domain is the whole point, so there the
+    // env value still wins over whichever host the request arrived on.
+    process.env.VERCEL_ENV = "production";
+    assert.strictEqual(metadataBaseUrl(previewRequest), "https://memeday-aws-flame.vercel.app");
+
+    // Same host either way: the env value is used, trailing slash removed.
+    process.env.VERCEL_ENV = "preview";
+    const sameHost = new NextRequest("https://memeday-aws-flame.vercel.app/api/nft-metadata");
+    assert.strictEqual(metadataBaseUrl(sameHost), "https://memeday-aws-flame.vercel.app");
+
+    // Unusable values never reach an asset.
+    process.env.NEXT_PUBLIC_APP_URL = "https://$VERCEL_URL";
+    assert.strictEqual(metadataBaseUrl(previewRequest), "https://memeday-preview.vercel.app");
+  } finally {
+    if (appUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = appUrl;
+    if (vercelEnv === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = vercelEnv;
+  }
+});
