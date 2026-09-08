@@ -281,7 +281,34 @@ test("metadata with a non-200 response is rejected", async () => {
   try {
     globalThis.fetch = async () => new Response("nope", { status: 404 });
     const verdict = await verifyMetadataDocument("https://arweave.test/m", "https://cdn.test/x");
-    assert.strictEqual(verdict.reason, "METADATA_UNREACHABLE");
+    assert.strictEqual(verdict.reason, "METADATA_NOT_FOUND");
+
+    globalThis.fetch = async () => new Response("nope", { status: 503 });
+    const other = await verifyMetadataDocument("https://arweave.test/m", "https://cdn.test/x");
+    assert.strictEqual(other.reason, "METADATA_UNREACHABLE");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// The document is read back seconds after it is written, so a first miss is a
+// wait, not a verdict — a 404 that a retry resolves must not fail a mint.
+test("a document that appears on the retry is accepted", async () => {
+  const { verifyMetadataDocument } = await importTs("lib", "solana", "verify-mint.ts");
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("nope", { status: 404 })
+        : new Response(JSON.stringify({ image: "https://cdn.test/x" }), {
+            headers: { "content-type": "application/json" },
+          });
+    };
+    const verdict = await verifyMetadataDocument("https://arweave.test/m", "https://cdn.test/x");
+    assert.strictEqual(verdict, null, "no objection once the document is readable");
+    assert.strictEqual(calls, 2);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -320,7 +347,7 @@ test("metadata that is not a readable JSON document is rejected", async () => {
   // Serves HTML, not JSON — the shape every SSO/interstitial failure takes.
   const html = await verifyMetadataDocument("https://example.com/", "https://example.test/a.png");
   assert.strictEqual(html?.outcome, "rejected");
-  assert.strictEqual(html?.reason, "METADATA_UNREACHABLE");
+  assert.strictEqual(html?.reason, "METADATA_NOT_JSON");
 
   const unresolvable = await verifyMetadataDocument(
     "https://$VERCEL_URL/api/nft-metadata/abc",

@@ -28,6 +28,11 @@ export type MintVerificationFailure =
   | "NAME_MISMATCH"
   | "ROYALTY_MISMATCH"
   | "METADATA_UNREACHABLE"
+  // Split out from METADATA_UNREACHABLE so a failure says which of the three
+  // very different problems it was: the document is not there, the host could
+  // not be reached at all, or what came back was not a JSON document.
+  | "METADATA_NOT_FOUND"
+  | "METADATA_NOT_JSON"
   | "METADATA_IMAGE_MISMATCH"
   | "TRANSACTION_NOT_FOUND"
   | "TRANSACTION_FAILED"
@@ -119,33 +124,47 @@ export async function verifyAssetOnChain(
 // just-written document is the normal case here, not an edge case: a CDN or an
 // Arweave gateway that has not caught up yet is a wait, not a verdict. Anything
 // still unreadable after it is treated as unreadable.
-async function fetchMetadata(metadataUri: string): Promise<unknown> {
-  for (let attempt = 0; ; attempt++) {
+async function fetchMetadata(
+  metadataUri: string
+): Promise<{ doc: unknown } | { failure: MintVerificationFailure }> {
+  let failure: MintVerificationFailure = "METADATA_UNREACHABLE";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
+    let res: Response;
     try {
-      const res = await fetch(metadataUri, {
+      res = await fetch(metadataUri, {
         // A gateway that hangs must not hold a serverless invocation open.
         signal: AbortSignal.timeout(10_000),
         cache: "no-store",
       });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      if (attempt === 1) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    } catch {
+      failure = "METADATA_UNREACHABLE";
+      continue;
+    }
+    if (!res.ok) {
+      failure = res.status === 404 ? "METADATA_NOT_FOUND" : "METADATA_UNREACHABLE";
+      continue;
+    }
+    try {
+      return { doc: await res.json() };
+    } catch {
+      // An SSO interstitial or an error page: reachable, but not a document.
+      failure = "METADATA_NOT_JSON";
+      continue;
     }
   }
+  return { failure };
 }
 
 export async function verifyMetadataDocument(
   metadataUri: string,
   expectedImageUri: string
 ): Promise<MintVerificationResult | null> {
-  let doc: unknown;
-  try {
-    doc = await fetchMetadata(metadataUri);
-  } catch {
-    return { outcome: "rejected", reason: "METADATA_UNREACHABLE" };
+  const fetched = await fetchMetadata(metadataUri);
+  if ("failure" in fetched) {
+    return { outcome: "rejected", reason: fetched.failure };
   }
+  const doc = fetched.doc;
 
   const image = (doc as { image?: unknown })?.image;
   if (typeof image !== "string" || image !== expectedImageUri) {
