@@ -10,7 +10,17 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
-import type { DbBagsToken, DbComment, DbMeme, DbPendingUpload, DbUser, OpenReport } from "./types";
+import type {
+  DbBagsToken,
+  DbComment,
+  DbMeme,
+  DbMintRequest,
+  DbPendingUpload,
+  DbUser,
+  MintStatus,
+  OpenReport,
+} from "./types";
+import { NFT_ORPHANED_UPLOAD_RETENTION_SECONDS } from "./nft-config";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -596,6 +606,12 @@ export async function getNftMetadata(id: string): Promise<NftMetadataRow | null>
     new GetCommand({
       TableName: TABLE,
       Key: { PK: `NFTMETA#${id}`, SK: `NFTMETA#${id}` },
+      // Strongly consistent because this document is read back within a second
+      // of being written — the mint flow registers it and then immediately
+      // checks it is readable before asking for a signature. A default read
+      // missed a row written 300ms earlier and reported the metadata as
+      // unreachable on a mint that was otherwise fine.
+      ConsistentRead: true,
     })
   );
   if (!result.Item) return null;
@@ -837,4 +853,302 @@ export async function getVerifiedBagsToken(creatorId: string): Promise<DbBagsTok
   const tokens = await getVerifiedBagsTokensByCreator(creatorId);
   if (tokens.length === 0) return null;
   return tokens.reduce((latest, t) => (t.verifiedAt > latest.verifiedAt ? t : latest));
+}
+
+
+// ---------------------------------------------------------------------------
+// Mint requests
+// ---------------------------------------------------------------------------
+
+// Which statuses may legally precede which. Enforced twice on purpose: in
+// code, so a wrong call fails with a readable message, and in the DynamoDB
+// ConditionExpression, so two concurrent requests cannot both win. The
+// condition is the one that actually guarantees correctness — the code check
+// only makes the failure legible.
+const MINT_TRANSITIONS: Record<MintStatus, MintStatus[]> = {
+  PENDING: ["UPLOADING_PICTURE", "FAILED"],
+  UPLOADING_PICTURE: ["UPLOADING_METADATA", "FAILED"],
+  UPLOADING_METADATA: ["AWAITING_SIGNATURE", "FAILED"],
+  // CONFIRMED is reachable directly from AWAITING_SIGNATURE because
+  // reconciliation may find the asset on-chain without us ever having recorded
+  // MINTING — the client can die between the wallet approving and us hearing
+  // about it.
+  AWAITING_SIGNATURE: ["MINTING", "SIGNATURE_REJECTED", "CONFIRMED", "FAILED"],
+  MINTING: ["CONFIRMED", "FAILED"],
+  // Retry goes straight back to AWAITING_SIGNATURE, reusing the stored URIs.
+  // CONFIRMED is allowed for the same reason as above and is deliberately not
+  // treated as a contradiction: a rejection is the client's claim, but the
+  // chain is the authority. An NFT that exists and is not recorded is the
+  // exact failure this whole state machine exists to prevent.
+  SIGNATURE_REJECTED: ["AWAITING_SIGNATURE", "CONFIRMED", "FAILED"],
+  CONFIRMED: [],
+  FAILED: [],
+};
+
+export class MintRequestExistsError extends Error {
+  constructor(assetId: string) {
+    super(`Mint request already exists for asset ${assetId}`);
+    this.name = "MintRequestExistsError";
+  }
+}
+
+export class MintTransitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MintTransitionError";
+  }
+}
+
+function parseMintRequest(item: Record<string, unknown>): DbMintRequest {
+  return {
+    mintRequestId: item.mintRequestId as string,
+    assetId: item.assetId as string,
+    userId: item.userId as string,
+    ownerWallet: item.ownerWallet as string,
+    network: item.network as string,
+    status: item.status as MintStatus,
+    pictureUri: item.pictureUri as string | undefined,
+    metadataUri: item.metadataUri as string | undefined,
+    assetAddress: item.assetAddress as string | undefined,
+    mintAddress: item.mintAddress as string | undefined,
+    txSignature: item.txSignature as string | undefined,
+    confirmedAt: item.confirmedAt as string | undefined,
+    nonce: item.nonce as string | undefined,
+    nonceExpiresAt: item.nonceExpiresAt as number | undefined,
+    attempts: (item.attempts as number) ?? 0,
+    lastError: item.lastError as string | undefined,
+    createdAt: item.createdAt as string,
+    updatedAt: item.updatedAt as string,
+  };
+}
+
+// The duplicate-mint guard. attribute_not_exists(PK) means the first caller to
+// reach this for a given assetId wins and every later one is rejected at the
+// condition check, so two tabs (or a double-click, or a retried fetch) cannot
+// produce two NFTs for one meme. Callers that want to resume an existing
+// request should catch MintRequestExistsError and re-read.
+export async function createMintRequest(req: {
+  assetId: string;
+  userId: string;
+  ownerWallet: string;
+  network: string;
+}): Promise<DbMintRequest> {
+  const now = new Date().toISOString();
+  const item: Record<string, unknown> = {
+    PK: `MINTREQ#${req.assetId}`,
+    SK: `MINTREQ#${req.assetId}`,
+    mintRequestId: randomUUID(),
+    assetId: req.assetId,
+    userId: req.userId,
+    ownerWallet: req.ownerWallet,
+    network: req.network,
+    status: "PENDING" satisfies MintStatus,
+    attempts: 0,
+    createdAt: now,
+    updatedAt: now,
+    // TTL. Removed on CONFIRMED (see confirmMintRequest) so a live NFT's
+    // record is never swept, while an abandoned one expires on its own.
+    expiresAt:
+      Math.floor(Date.now() / 1000) + NFT_ORPHANED_UPLOAD_RETENTION_SECONDS,
+  };
+  try {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(PK)",
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new MintRequestExistsError(req.assetId);
+    }
+    throw err;
+  }
+  return parseMintRequest(item);
+}
+
+export async function getMintRequest(assetId: string): Promise<DbMintRequest | null> {
+  noStore();
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `MINTREQ#${assetId}`, SK: `MINTREQ#${assetId}` },
+    })
+  );
+  if (!result.Item) return null;
+  return parseMintRequest(result.Item as Record<string, unknown>);
+}
+
+type MintPatch = Partial<
+  Pick<
+    DbMintRequest,
+    | "pictureUri"
+    | "metadataUri"
+    | "assetAddress"
+    | "mintAddress"
+    | "txSignature"
+    | "nonce"
+    | "nonceExpiresAt"
+    | "lastError"
+  >
+>;
+
+// Advances a request to `to`, but only from a status that legally precedes it.
+// `from` defaults to every such status, which is what makes the transition
+// table the single source of truth rather than something each call site
+// restates. Throws MintTransitionError when the row is gone or is not in an
+// allowed state — including when a concurrent caller got there first.
+export async function transitionMintRequest(
+  assetId: string,
+  to: MintStatus,
+  patch: MintPatch = {},
+  opts: { from?: MintStatus[]; incrementAttempts?: boolean } = {}
+): Promise<DbMintRequest> {
+  const allowedFrom =
+    opts.from ??
+    (Object.keys(MINT_TRANSITIONS) as MintStatus[]).filter((s) =>
+      MINT_TRANSITIONS[s].includes(to)
+    );
+  if (allowedFrom.length === 0) {
+    throw new MintTransitionError(`No status may transition to ${to}`);
+  }
+
+  const names: Record<string, string> = { "#status": "status" };
+  const values: Record<string, unknown> = {
+    ":to": to,
+    ":now": new Date().toISOString(),
+  };
+  const sets = ["#status = :to", "updatedAt = :now"];
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    names[`#${key}`] = key;
+    values[`:${key}`] = value;
+    sets.push(`#${key} = :${key}`);
+  }
+
+  if (opts.incrementAttempts) {
+    values[":one"] = 1;
+    values[":zero"] = 0;
+    sets.push("attempts = if_not_exists(attempts, :zero) + :one");
+  }
+
+  const removes: string[] = [];
+  if (to === "CONFIRMED") {
+    values[":confirmedAt"] = values[":now"];
+    sets.push("confirmedAt = :confirmedAt");
+    // Dropping the TTL attribute is what guarantees the cleanup sweep can
+    // never delete the record of a real, on-chain NFT.
+    removes.push("expiresAt");
+  }
+
+  const fromPlaceholders = allowedFrom.map((_, i) => `:from${i}`);
+  allowedFrom.forEach((status, i) => {
+    values[`:from${i}`] = status;
+  });
+
+  let expr = `SET ${sets.join(", ")}`;
+  if (removes.length > 0) expr += ` REMOVE ${removes.join(", ")}`;
+
+  try {
+    const result = await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MINTREQ#${assetId}`, SK: `MINTREQ#${assetId}` },
+        UpdateExpression: expr,
+        ConditionExpression: `attribute_exists(PK) AND #status IN (${fromPlaceholders.join(", ")})`,
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+        ReturnValues: "ALL_NEW",
+      })
+    );
+    return parseMintRequest(result.Attributes as Record<string, unknown>);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new MintTransitionError(
+        `Cannot move mint request ${assetId} to ${to}: it is missing or not in ${allowedFrom.join("/")}`
+      );
+    }
+    throw err;
+  }
+}
+
+// Terminal success. Separate from transitionMintRequest only to make the
+// mintAddress/txSignature pair required — a CONFIRMED row without them cannot
+// be reconciled or displayed, and is the one state we must never write.
+export async function confirmMintRequest(
+  assetId: string,
+  result: { mintAddress: string; txSignature: string }
+): Promise<DbMintRequest> {
+  return transitionMintRequest(assetId, "CONFIRMED", {
+    mintAddress: result.mintAddress,
+    txSignature: result.txSignature,
+  });
+}
+
+export { MINT_TRANSITIONS };
+
+// Records the verified mint address on an existing meme. Conditional on the
+// attribute being absent so a second confirm — or a reconciliation running
+// alongside one — can never overwrite a mint address that is already there.
+// Returns false when the meme is missing or already carries one, which the
+// caller treats as "nothing to do", not as an error.
+export async function setMemeNftMint(memeId: string, nftMint: string): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+        UpdateExpression: "SET nftMint = :mint",
+        ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(nftMint)",
+        ExpressionAttributeValues: { ":mint": nftMint },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+// Attaches a fresh nonce without moving the request. Separate from
+// transitionMintRequest because a status-to-itself "transition" reads as a
+// mistake and would bypass the transition table's guarantees. The status is
+// still asserted in the condition, so this cannot re-arm a request that moved
+// on (or was confirmed) since it was read.
+export async function refreshMintNonce(
+  assetId: string,
+  expectedStatus: MintStatus,
+  nonce: { nonce: string; nonceExpiresAt: number }
+): Promise<DbMintRequest> {
+  try {
+    const result = await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MINTREQ#${assetId}`, SK: `MINTREQ#${assetId}` },
+        UpdateExpression:
+          "SET #nonce = :nonce, nonceExpiresAt = :exp, updatedAt = :now",
+        ConditionExpression: "attribute_exists(PK) AND #status = :expected",
+        ExpressionAttributeNames: { "#status": "status", "#nonce": "nonce" },
+        ExpressionAttributeValues: {
+          ":nonce": nonce.nonce,
+          ":exp": nonce.nonceExpiresAt,
+          ":now": new Date().toISOString(),
+          ":expected": expectedStatus,
+        },
+        ReturnValues: "ALL_NEW",
+      })
+    );
+    return parseMintRequest(result.Attributes as Record<string, unknown>);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new MintTransitionError(
+        `Cannot refresh nonce for ${assetId}: it is missing or no longer ${expectedStatus}`
+      );
+    }
+    throw err;
+  }
 }

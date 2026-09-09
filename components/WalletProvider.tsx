@@ -9,6 +9,7 @@ import { WalletModalProvider as _WMP } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { useAppStore } from "@/lib/store";
 import type { SolanaNetwork, SolanaExplorerCluster } from "@/lib/solana/network";
+import type { NftStorageProvider } from "@/lib/nft-config";
 
 require("@solana/wallet-adapter-react-ui/styles.css");
 
@@ -31,6 +32,12 @@ interface SolanaConfig {
   explorerCluster: SolanaExplorerCluster;
   enabled: boolean;
   disabledMessage: string;
+  // Minting policy, validated server-side in lib/nft-config.ts. Handed down
+  // for the same reason as the network: the client cannot read those env vars,
+  // and a client-side default that disagreed with the server's value would be
+  // minted on-chain and then rejected by the verifier.
+  storageProvider: NftStorageProvider;
+  royaltyBasisPoints: number;
 }
 
 const SolanaConfigContext = createContext<SolanaConfig | null>(null);
@@ -49,6 +56,8 @@ export function SolanaWalletProvider({
   explorerCluster,
   enabled,
   disabledMessage,
+  storageProvider,
+  royaltyBasisPoints,
   children,
 }: Omit<SolanaConfig, "rpcUrl"> & {
   rpcPath: string;
@@ -84,8 +93,24 @@ export function SolanaWalletProvider({
   );
 
   const config = useMemo(
-    () => ({ network, rpcUrl, explorerCluster, enabled, disabledMessage }),
-    [network, rpcUrl, explorerCluster, enabled, disabledMessage]
+    () => ({
+      network,
+      rpcUrl,
+      explorerCluster,
+      enabled,
+      disabledMessage,
+      storageProvider,
+      royaltyBasisPoints,
+    }),
+    [
+      network,
+      rpcUrl,
+      explorerCluster,
+      enabled,
+      disabledMessage,
+      storageProvider,
+      royaltyBasisPoints,
+    ]
   );
 
   return (
