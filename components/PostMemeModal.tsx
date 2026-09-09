@@ -6,10 +6,11 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { X, Upload, Zap, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
-import { createBagsProject, createBagsToken } from "@/lib/bags";
 import { createMintUmi, mintMemeNft, prefundStorage } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
+import { BagsLaunchClaim } from "@/components/BagsLaunchClaim";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 import type { MintStatus } from "@/lib/types";
 
 // The mint is several server round-trips and an upload before the wallet is
@@ -34,24 +35,26 @@ export function PostMemeModal({ onClose }: Props) {
   const { rpcUrl, enabled, disabledMessage, network, storageProvider, royaltyBasisPoints } =
     useSolanaConfig();
   const wallet = useWallet();
-  const { publicKey } = wallet;
-  const { cognitoToken, authMethod, addToast, emitBagsEvent, myBagsProjectId, myTokenSymbol, setMyBagsProject } =
-    useAppStore();
+  const { publicKey, signMessage } = wallet;
+  const { cognitoToken, authMethod, addToast } = useAppStore();
 
   const [caption, setCaption] = useState("");
   const [isNFT, setIsNFT] = useState(false);
   const [nftPrice, setNftPrice] = useState("0.01");
-  const [tokenSymbol, setTokenSymbol] = useState("");
-  const [launchToken, setLaunchToken] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<"form" | "uploading" | "validating" | "minting" | "creating">("form");
+  const [step, setStep] = useState<"form" | "uploading" | "validating" | "linking" | "minting" | "posting">("form");
   const [mintStatus, setMintStatus] = useState<MintStatus | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [postedMeme, setPostedMeme] = useState<{ imageUrl: string; caption: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const hasCreatorToken = !!myBagsProjectId;
+  // Holds user input, so backdrop click never dismisses it (KAN-74) — X only.
+  // Listeners are detached while posting: the flow keeps running after the
+  // modal unmounts (uploads, wallet prompts, the mint), so an Escape press
+  // mid-mint left the user approving transactions for a dialog that was gone.
+  useDialogDismiss({ onClose, closeOnBackdrop: false, enabled: !loading });
 
   useEffect(() => {
     if (!selectedImage) { setImagePreviewUrl(""); return; }
@@ -155,7 +158,10 @@ export function PostMemeModal({ onClose }: Props) {
       // transaction confirming, then the Irys node crediting it — and it needs
       // nothing but the file's size. Started here, it runs while the image
       // uploads and the validation Lambda screens it, instead of after.
-      const willMint = isNFT && enabled && authMethod === "wallet";
+      //
+      // Gated on publicKey rather than authMethod, matching the mint gate
+      // below: an email signup with a wallet connected is allowed to mint.
+      const willMint = isNFT && enabled && !!publicKey;
       const mintUmi =
         willMint && storageProvider === "irys"
           ? createMintUmi(wallet, rpcUrl, network)
@@ -181,12 +187,62 @@ export function PostMemeModal({ onClose }: Props) {
       setStep("validating");
       await waitForValidation(pendingId);
 
-      // 2. Mint NFT on Solana (Phantom will prompt for signature)
+      // 2. Upsert the user record and, for an email signup, prove the connected
+      // wallet. This has to happen BEFORE the mint, not after: /api/mint/prepare
+      // rejects an ownerWallet that is not already on the user item, so leaving
+      // the link until the end made an email user's first mint always fail.
+      //
+      // A wallet-authenticated caller already has a proven address on the token
+      // (KAN-75); the server derives it from there.
+      const userRes = await fetch("/api/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${await requireToken()}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const { user: currentUser } = userRes.ok ? await userRes.json() : { user: null };
+
+      // Gates on walletVerifiedAt, not walletAddr (KAN-75 follow-up): a row
+      // with walletAddr set but no verification stamp is a pre-KAN-75
+      // unverified value, and this is the organic re-link point for it, same
+      // as this flow already is for a never-linked account.
+      if (authMethod === "email" && publicKey && signMessage && !currentUser?.walletVerifiedAt) {
+        setStep("linking");
+        try {
+          const nonceRes = await fetch("/api/auth/wallet/nonce", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress }),
+          });
+          if (nonceRes.ok) {
+            const { challenge } = await nonceRes.json();
+            const sigBytes = await signMessage(new TextEncoder().encode(challenge));
+            const signature = Buffer.from(sigBytes).toString("base64");
+            await fetch("/api/users/wallet", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${await requireToken()}`,
+              },
+              body: JSON.stringify({ walletAddress, challenge, signature }),
+            });
+          }
+        } catch {
+          // Declining the signature prompt (or a transient failure) must not
+          // block posting the meme — tipping just stays unavailable until
+          // the next post. The mint below will fail on the unlinked wallet and
+          // is reported separately, which is the same non-fatal outcome.
+        }
+      }
+
+      // 3. Mint NFT on Solana (Phantom will prompt for signature)
       let mintAddress: string | null = null;
       if (isNFT) {
         if (!enabled) {
           addToast(disabledMessage, "error");
-        } else if (authMethod !== "wallet") {
+        } else if (!publicKey) {
           addToast("NFT minting is only available for wallet-connected users.", "error");
         } else {
           setStep("minting");
@@ -229,39 +285,8 @@ export function PostMemeModal({ onClose }: Props) {
         }
       }
 
-      // 3. Bags project/token for first-time creators (wallet users only)
-      setStep("creating");
-      let projectId = myBagsProjectId;
-      let createdTokenSymbol: string | null = null;
-
-      if (!hasCreatorToken && launchToken && tokenSymbol && authMethod === "wallet") {
-        const project = await createBagsProject(walletAddress, caption.slice(0, 20));
-        projectId = project.projectId;
-        emitBagsEvent({ type: "project_created", projectId: project.projectId });
-        addToast(`Creator project created on Bags (${project.projectId.slice(0, 12)}…)`, "bags");
-
-        const token = await createBagsToken(project.projectId, `${tokenSymbol} Token`, tokenSymbol);
-        createdTokenSymbol = token.symbol;
-        emitBagsEvent({ type: "token_created", symbol: token.symbol, projectId: project.projectId });
-        addToast(`Creator token $${token.symbol} is live on Bags!`, "bags");
-        setMyBagsProject(project.projectId, token.symbol);
-      }
-
-      // 4. Upsert user record
-      await fetch("/api/users", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${await requireToken()}`,
-        },
-        body: JSON.stringify({
-          walletAddr: walletAddress || undefined,
-          bagsProjectId: projectId,
-          creatorTokenSymbol: createdTokenSymbol ?? undefined,
-        }),
-      });
-
-      // 5. Save meme to DB
+      // 4. Save meme to DB
+      setStep("posting");
       const res = await fetch("/api/memes", {
         method: "POST",
         headers: {
@@ -283,7 +308,10 @@ export function PostMemeModal({ onClose }: Props) {
 
       addToast(`Meme posted! "${caption.slice(0, 30)}…"`, "success");
       router.refresh();
-      onClose();
+      // Stay open on a success screen instead of closing: the Bags launch
+      // action needs the meme's public CloudFront URL, which only exists
+      // once the API response comes back (see components/BagsLaunchClaim.tsx).
+      setPostedMeme({ imageUrl: meme.imageUrl, caption: caption.trim() });
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Failed to post meme.", "error");
     } finally {
@@ -295,21 +323,12 @@ export function PostMemeModal({ onClose }: Props) {
   const stepLabel =
     step === "uploading" ? "Uploading image…" :
     step === "validating" ? "Validating image…" :
+    step === "linking" ? "Linking your wallet… (approve in wallet)" :
     step === "minting" ? MINT_STEP_LABELS[mintStatus ?? "PENDING"] :
-    "Creating on Bags & posting…";
+    "Posting…";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      // Locked while posting. The flow keeps running after the modal unmounts —
-      // uploads, wallet prompts and the mint all continue — so a stray click on
-      // the backdrop left the user with approvals appearing for a dialog that
-      // was no longer there.
-      onClick={(e) => {
-        if (loading) return;
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div className="bg-surface border border-border rounded-2xl w-full max-w-lg animate-slide-up shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-surface z-10">
           <h2 className="font-bold text-white text-lg">Post a Meme</h2>
@@ -322,6 +341,33 @@ export function PostMemeModal({ onClose }: Props) {
           </button>
         </div>
 
+        {postedMeme ? (
+          <>
+            <div className="p-5 space-y-4">
+              <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/30 rounded-xl px-4 py-3 text-sm text-green-400">
+                <Zap size={14} />
+                Meme posted! &quot;{postedMeme.caption.slice(0, 30)}…&quot;
+              </div>
+              <img
+                src={postedMeme.imageUrl}
+                alt="Posted meme"
+                className="mx-auto max-h-40 w-auto rounded-lg object-contain"
+              />
+              {authMethod === "wallet" && (
+                <BagsLaunchClaim imageUrl={postedMeme.imageUrl} defaultName={postedMeme.caption} />
+              )}
+            </div>
+            <div className="p-5 pt-0">
+              <button
+                onClick={onClose}
+                className="w-full py-3.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light transition-all"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         <div className="p-5 space-y-4">
           <input
             ref={fileInputRef}
@@ -382,7 +428,7 @@ export function PostMemeModal({ onClose }: Props) {
                   addToast(disabledMessage, "error");
                   return;
                 }
-                if (authMethod !== "wallet" && !isNFT) {
+                if (!publicKey && !isNFT) {
                   addToast("NFT minting is only available for wallet-connected users.", "error");
                   return;
                 }
@@ -415,65 +461,14 @@ export function PostMemeModal({ onClose }: Props) {
             </div>
           )}
 
-          {!hasCreatorToken && authMethod === "wallet" && (
-            <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Zap size={16} className="text-bags" />
-                    <p className="text-sm font-bold text-bags">Launch Your Creator Token on Bags</p>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Create a fungible creator token on Bags. Fans can invest in you directly.
-                  </p>
-                </div>
-                {/* Launching a token is a one-time, irreversible act, so it takes
-                    a deliberate toggle. A symbol sitting in the field was enough
-                    on its own before, which a browser autofill could supply. */}
-                <button
-                  type="button"
-                  onClick={() => setLaunchToken(!launchToken)}
-                  className={`w-11 h-6 flex-shrink-0 rounded-full transition-colors relative ${launchToken ? "bg-bags" : "bg-gray-700"}`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${launchToken ? "translate-x-5" : "translate-x-0.5"}`}
-                  />
-                </button>
-              </div>
-              {launchToken && (
-                <div className="mt-3">
-                  <label className="text-xs text-gray-400 mb-1.5 block font-medium">
-                    Token Symbol (2-6 chars, e.g. MLRD)
-                  </label>
-                  <input
-                    type="text"
-                    value={tokenSymbol}
-                    onChange={(e) => setTokenSymbol(e.target.value.toUpperCase().slice(0, 6))}
-                    placeholder="MYTKN"
-                    maxLength={6}
-                    autoComplete="off"
-                    className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-bags placeholder:text-gray-600"
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {!hasCreatorToken && authMethod === "email" && (
+          {!publicKey && (
             <div className="bg-yellow-900/10 border border-yellow-700/30 rounded-xl p-4">
               <div className="flex items-center gap-2">
                 <Zap size={16} className="text-yellow-500" />
                 <p className="text-sm text-yellow-400">
-                  NFT minting and creator tokens on Bags are only available for wallet-connected users.
+                  NFT minting is only available for wallet-connected users.
                 </p>
               </div>
-            </div>
-          )}
-
-          {hasCreatorToken && (
-            <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/30 rounded-xl px-4 py-2.5 text-sm text-green-400">
-              <Zap size={14} />
-              Creator token ${myTokenSymbol} active on Bags
             </div>
           )}
         </div>
@@ -490,10 +485,12 @@ export function PostMemeModal({ onClose }: Props) {
               disabled={!caption.trim() || !selectedImage || !cognitoToken}
               className="w-full py-3.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
-              Post Meme{!hasCreatorToken && launchToken && tokenSymbol && authMethod === "wallet" ? " & Launch Token" : ""}
+              Post Meme
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

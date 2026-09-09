@@ -11,6 +11,7 @@ import {
 import { randomUUID } from "crypto";
 import { dynamo, TABLE } from "./dynamo";
 import type {
+  DbBagsToken,
   DbComment,
   DbMeme,
   DbMintRequest,
@@ -73,11 +74,23 @@ function parseComment(item: Record<string, unknown>): DbComment {
   };
 }
 
+function parseBagsToken(item: Record<string, unknown>): DbBagsToken {
+  return {
+    creatorId: item.creatorId as string,
+    tokenMint: item.tokenMint as string,
+    symbol: item.symbol as string,
+    name: item.name as string,
+    partnerAttributed: (item.partnerAttributed as boolean) ?? false,
+    verifiedAt: item.verifiedAt as string,
+  };
+}
+
 function parseUser(item: Record<string, unknown>): DbUser {
   return {
     userId: item.userId as string,
     email: item.email as string | undefined,
     walletAddr: item.walletAddr as string | undefined,
+    walletVerifiedAt: item.walletVerifiedAt as string | undefined,
     displayName: item.displayName as string | undefined,
     authMethods: (item.authMethods as string[]) ?? [],
     bagsProjectId: item.bagsProjectId as string | undefined,
@@ -86,6 +99,41 @@ function parseUser(item: Record<string, unknown>): DbUser {
     credScore: (item.credScore as number) ?? 0,
     createdAt: item.createdAt as string,
   };
+}
+
+// Batch-fetch multiple USER# rows in one round trip, keyed by userId (KAN-75
+// follow-up). Lets the meme-serving functions below check every creator's
+// current walletVerifiedAt without a read per meme: one extra BatchGet for
+// the distinct creators in a page, alongside the BatchGet they already do for
+// the meme rows themselves.
+async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return new Map();
+  const result = await dynamo.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [TABLE]: { Keys: unique.map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` })) },
+      },
+    })
+  );
+  const map = new Map<string, DbUser>();
+  for (const item of result.Responses?.[TABLE] ?? []) {
+    const user = parseUser(item as Record<string, unknown>);
+    map.set(user.userId, user);
+  }
+  return map;
+}
+
+// A creatorWalletAddr snapshot is safe to hand to a tip button only if the
+// creator's USER# row currently has walletVerifiedAt set (KAN-75 follow-up).
+// The snapshot on the meme itself never expires and is never touched when a
+// creator later re-links, so this has to be re-checked against live user
+// data on every serve, not cached on the meme or decided in a component.
+function withVerifiedTipDestination(meme: DbMeme, creators: Map<string, DbUser>): DbMeme {
+  if (!meme.creatorWalletAddr) return meme;
+  const creator = creators.get(meme.creatorId);
+  if (creator?.walletVerifiedAt) return meme;
+  return { ...meme, creatorWalletAddr: undefined };
 }
 
 // Query FEED#GLOBAL via GSI3 (createdAt desc = newest first), BatchGet full items.
@@ -110,9 +158,14 @@ export async function getMemes(): Promise<DbMeme[]> {
   const batchResult = await dynamo.send(
     new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
   );
-  return (batchResult.Responses?.[TABLE] ?? [])
+  const memes = (batchResult.Responses?.[TABLE] ?? [])
     .map((item) => parseMeme(item as Record<string, unknown>))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const creators = await getUsersByIds(
+    memes.filter((m) => m.creatorWalletAddr).map((m) => m.creatorId)
+  );
+  return memes.map((m) => withVerifiedTipDestination(m, creators));
 }
 
 // Query FEED#GLOBAL base table (score desc = highest score first), GetItem for full details.
@@ -165,7 +218,10 @@ export async function getMemeById(id: string): Promise<DbMeme | null> {
   if (!result.Item) return null;
   const meme = parseMeme(result.Item as Record<string, unknown>);
   if (meme.status === "pending_review" || meme.status === "removed") return null;
-  return meme;
+  if (!meme.creatorWalletAddr) return meme;
+  // Single meme, so a plain getUserById is enough here (no batching needed).
+  const creator = await getUserById(meme.creatorId);
+  return withVerifiedTipDestination(meme, creator ? new Map([[creator.userId, creator]]) : new Map());
 }
 
 // Query GSI1 to get memes created by a specific user (creatorId = Cognito sub).
@@ -183,9 +239,16 @@ export async function getMemesByCreator(userId: string): Promise<DbMeme[]> {
       },
     })
   );
-  return (result.Items ?? [])
+  const memes = (result.Items ?? [])
     .map((item) => parseMeme(item as Record<string, unknown>))
     .filter((meme) => meme.status !== "pending_review");
+
+  // Every meme here shares the same creator (the profile owner), so this is
+  // one extra read regardless of how many memes are shown, not one per card.
+  if (!memes.some((m) => m.creatorWalletAddr)) return memes;
+  const creator = await getUserById(userId);
+  const creators = creator ? new Map([[creator.userId, creator]]) : new Map();
+  return memes.map((m) => withVerifiedTipDestination(m, creators));
 }
 
 // Created before the S3 presigned URL is issued so the S3-triggered validation
@@ -246,9 +309,14 @@ export async function finalizeMeme(
   // earlier read misses first-time creators and leaves the meme with no
   // creator wallet, which makes it permanently untippable.
   const creator = await getUserById(pending.creatorId);
+  // Only snapshot the wallet when it is proven (KAN-75). An unverified
+  // walletAddr must never become a tip destination, and creatorWalletAddr is
+  // the only field MemeActionBar/MemeCard read for that — leaving it unset
+  // reuses the existing "no wallet" UI path instead of adding a new check
+  // there.
   const meme = await createMeme({
     creatorId: pending.creatorId,
-    creatorWalletAddr: creator?.walletAddr,
+    creatorWalletAddr: creator?.walletVerifiedAt ? creator.walletAddr : undefined,
     s3Key: pending.s3Key,
     caption: pending.caption,
     nftMint: extra.nftMint,
@@ -387,6 +455,10 @@ export async function upsertUser(user: {
   userId: string;
   email?: string;
   walletAddr?: string;
+  // True only when the caller already proved ownership of walletAddr, via a
+  // real signature check or a Cognito wallet_<addr> token (KAN-75). Callers
+  // must never derive this from a client-supplied flag.
+  walletVerified?: boolean;
   displayName?: string;
   authMethods?: string[];
   bagsProjectId?: string;
@@ -416,6 +488,13 @@ export async function upsertUser(user: {
     exprVals[":walletAddr"] = user.walletAddr;
     exprVals[":walletKey"] = `WALLET#${user.walletAddr}`;
     exprVals[":userKey2"] = `USER#${user.userId}`;
+    // Only ever stamped, never cleared here: a caller that omits walletAddr
+    // entirely takes the branch above this one and never reaches this block,
+    // so an existing verified stamp is untouched by unrelated profile writes.
+    if (user.walletVerified) {
+      updateExpr += ", walletVerifiedAt = :walletVerifiedAt";
+      exprVals[":walletVerifiedAt"] = now;
+    }
   }
   if (user.displayName !== undefined) {
     updateExpr += ", displayName = :displayName";
@@ -709,6 +788,71 @@ export async function dismissReport(memeId: string): Promise<void> {
       Key: { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${memeId}` },
     })
   );
+}
+
+// SK is the constant TOKEN#PRIMARY rather than TOKEN#<tokenMint> (KAN-79):
+// tokenMint lives only in the tokenMint attribute, never in the key, so a
+// creator has at most one item this function can ever write, and the
+// ConditionExpression below makes the first write of it a one-time binding —
+// no TransactWriteItems, no second source of truth on the USER# item.
+export class BagsTokenAlreadyBoundError extends Error {}
+
+export async function createVerifiedBagsToken(token: {
+  creatorId: string;
+  tokenMint: string;
+  symbol: string;
+  name: string;
+  partnerAttributed: boolean;
+}): Promise<DbBagsToken> {
+  const item: Record<string, unknown> = {
+    PK: `USER#${token.creatorId}`,
+    SK: "TOKEN#PRIMARY",
+    creatorId: token.creatorId,
+    tokenMint: token.tokenMint,
+    symbol: token.symbol,
+    name: token.name,
+    partnerAttributed: token.partnerAttributed,
+    verifiedAt: new Date().toISOString(),
+  };
+  try {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(PK)",
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      throw new BagsTokenAlreadyBoundError("This account is already bound to a Bags token");
+    }
+    throw err;
+  }
+  return parseBagsToken(item);
+}
+
+// Shares the User row's PK by design (see DbBagsToken) — this Query only ever
+// sees the TOKEN# items in that collection, never the USER# item itself.
+export async function getVerifiedBagsTokensByCreator(creatorId: string): Promise<DbBagsToken[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+      ExpressionAttributeValues: { ":pk": `USER#${creatorId}`, ":prefix": "TOKEN#" },
+    })
+  );
+  return (result.Items ?? []).map((item) => parseBagsToken(item as Record<string, unknown>));
+}
+
+// Single "does this creator have a token" read, shared by the profile page
+// and the claim UI's launch-button-vs-card decision (KAN-29 follow-up), so
+// both always agree on which one counts when a creator has claimed more than
+// one launch: the most recently verified.
+export async function getVerifiedBagsToken(creatorId: string): Promise<DbBagsToken | null> {
+  const tokens = await getVerifiedBagsTokensByCreator(creatorId);
+  if (tokens.length === 0) return null;
+  return tokens.reduce((latest, t) => (t.verifiedAt > latest.verifiedAt ? t : latest));
 }
 
 

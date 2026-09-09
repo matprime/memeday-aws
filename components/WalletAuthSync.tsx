@@ -86,6 +86,8 @@ export function WalletAuthSync() {
         if (!useAppStore.getState().cognitoToken) {
           setCognitoToken(accessToken, "wallet");
           if (isNewUser) track(EVENTS.signupCompleted, { method: "wallet" });
+          else track(EVENTS.loginCompleted, { method: "wallet" });
+
           // Mirrors what EmailAuthModal does with the email: the Cognito user
           // carries the wallet, but the user item is what /api/mint/prepare
           // checks the mint's owner wallet against, and until this call it does

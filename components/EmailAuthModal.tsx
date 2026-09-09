@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X, Mail, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { EVENTS, track } from "@/lib/analytics";
+import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 interface Props {
   onClose: () => void;
@@ -23,6 +24,8 @@ export function EmailAuthModal({ onClose }: Props) {
   const [pendingUsername, setPendingUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useDialogDismiss({ onClose, closeOnBackdrop: false });
 
   const post = async (path: string, body: Record<string, string>) => {
     const res = await fetch(path, {
@@ -48,6 +51,7 @@ export function EmailAuthModal({ onClose }: Props) {
   const finishLogin = async (accessToken: string, isNewAccount = false) => {
     setCognitoToken(accessToken, "email", email);
     if (isNewAccount) track(EVENTS.signupCompleted, { method: "email" });
+    else track(EVENTS.loginCompleted, { method: "email" });
     // Ensure the user item exists with the EMAIL# lookup entry
     await fetch("/api/users", {
       method: "POST",
@@ -111,7 +115,6 @@ export function EmailAuthModal({ onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-surface border border-border rounded-2xl w-full max-w-sm animate-slide-up shadow-2xl">
         <div className="flex items-center justify-between p-5 border-b border-border">

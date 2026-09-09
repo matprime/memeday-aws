@@ -62,6 +62,7 @@ export interface DbUser {
   userId: string;           // Cognito sub — primary identity
   email?: string;
   walletAddr?: string;      // Solana public key (linked after signup)
+  walletVerifiedAt?: string; // set only after a real signature/token check (KAN-75); absent means walletAddr is unverified
   displayName?: string;
   authMethods: string[];    // e.g. ["email"] | ["wallet"] | ["email","wallet"]
   bagsProjectId?: string;
@@ -144,6 +145,18 @@ export interface DbComment {
   walletAddr?: string;      // for display (if user has a linked wallet)
   body: string;
   createdAt: string;
+}
+
+// Creator's Bags launch, once claimed and server-verified (KAN-29). Stored at
+// PK = USER#<creatorId>, SK = TOKEN#<tokenMint> — same item collection as the
+// User row, so a profile page read can pull both in one Query.
+export interface DbBagsToken {
+  creatorId: string;
+  tokenMint: string;
+  symbol: string;             // as supplied by the creator at claim time, not independently verified against Bags
+  name: string;                // same caveat as symbol
+  partnerAttributed: boolean; // verified server-side via GET /token-launch accountKeys
+  verifiedAt: string;
 }
 
 export interface OpenReport {

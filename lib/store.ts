@@ -7,7 +7,7 @@ import { BagsEvent } from "./types";
 // Decodes the `sub` claim from a Cognito JWT without verifying the signature.
 // Used only as a stable localStorage key — the server independently verifies
 // the token on every vote request, so this isn't a security boundary.
-function decodeJwtSub(token: string): string | null {
+export function decodeJwtSub(token: string): string | null {
   try {
     const payload = token.split(".")[1];
     const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
@@ -55,11 +55,6 @@ interface AppState {
   reportedMemes: Set<string>;
   hydrateReportedMemes: (userId: string | null, memeIds: string[]) => Promise<void>;
   reportOnMeme: (userId: string | null, memeId: string) => void;
-
-  // Creator project state (per session)
-  myBagsProjectId: string | null;
-  myTokenSymbol: string | null;
-  setMyBagsProject: (projectId: string, tokenSymbol: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -170,11 +165,6 @@ export const useAppStore = create<AppState>()(
       }
       return { reportedMemes: next };
     }),
-
-  myBagsProjectId: null,
-  myTokenSymbol: null,
-  setMyBagsProject: (projectId, tokenSymbol) =>
-    set({ myBagsProjectId: projectId, myTokenSymbol: tokenSymbol }),
     }),
     {
       name: "memeday-auth",

@@ -10,7 +10,9 @@ Anything marked UNVERIFIED could not be confirmed from source in this repo.
 DynamoDB single-table primary store (single-region today; Global Tables
 planned), Vercel + Lambda hybrid compute, S3 media behind CloudFront,
 Streams-driven materialized views, Cognito identity provider (email +
-server-verified wallet sign-in), Bags.fm mocked.
+server-verified wallet sign-in), Bags.fm token launch is a link-out with
+server-side read verification (KAN-29); in-app trading (buy/sell/price) is
+still mocked (KAN-52).
 
 ## Layers
 
@@ -35,6 +37,9 @@ Vercel serverless (Next.js API routes) handle all synchronous work:
 | `/api/nft-metadata`, `/api/nft-metadata/[id]` | Register and serve NFT metadata JSON |
 | `/api/rpc` | Allowlisted Solana JSON-RPC proxy |
 | `/api/image/[...key]` | S3 image proxy (see the caveat under Media) |
+| `/api/bags/launch-config` | Returns `{ live: false }` off mainnet, or `{ live: true, partnerWallet, partnerConfig }` on it, so the client knows whether to open bags.fm or run the mock |
+| `/api/bags/verify` | Verifies a claimed Bags launch (creatorship + partner attribution) on mainnet, or returns a simulated result off it, and stores the outcome either way |
+| `/api/bags/my-token` | Returns the caller's verified Bags token, if any — drives launch-button-vs-token-card in the UI |
 
 AWS Lambda handles event-driven and privileged work. Exactly three functions
 exist, all defined in `infra/lib/memeday-stack.ts`:
@@ -162,8 +167,38 @@ touched by TTL.
   old `isMutable: false`. No on-chain `symbol` field in Core; `MDAY` is no
   longer set anywhere. Signed client-side by the user's wallet.
 - Solana Pay tips: LIVE, `lib/solana/tip.ts`.
-- Bags.fm: MOCKED (`lib/bags.ts`, simulated delays, no network calls).
-  Mainnet, post-deadline only. The single simulated link in the diagram.
+- Bags.fm token launch (KAN-29): LIVE as a link-out, production only. A
+  single server-side switch, `isBagsLiveModeEnabled()` in
+  `lib/bags-server.ts` (`SOLANA_ENABLED && SOLANA_NETWORK === "mainnet"`,
+  read from `lib/solana/network.ts` — never a second, independently-computed
+  copy of this condition anywhere else), decides live vs mock for every Bags
+  call site. Live: MemeDay builds a Launch Intent URL (`lib/bags.ts`, pure,
+  no secrets) carrying our partner wallet + Partner Config PDA and opens it
+  in a new tab; the creator connects and signs on bags.fm itself. MemeDay
+  signs nothing and calls no on-chain RPC for this. `POST /api/bags/verify`
+  then reads Bags' `token-launch` and `token-launch/creator/v3` HTTP
+  endpoints (not on-chain RPC, `x-api-key`, server-only) to confirm
+  creatorship and whether the launch carries our partner wallet in
+  `accountKeys`, then stores the result (see TOKEN# below). Off mainnet
+  (Preview, local, CI): no bags.fm tab opens and no call reaches
+  `public-api-v2.bags.fm` — the launch button runs a labeled simulated path
+  straight to a stored, obviously-fake `SIMULATED_<symbol>` token, so the
+  flow stays reviewable. `BAGS_API_KEY`/`BAGS_PARTNER_WALLET`/
+  `BAGS_PARTNER_CONFIG` are read and validated lazily, only inside the live
+  branch — never at import, since Preview/local/CI deliberately never set
+  them. The verify route itself has no mainnet gate of its own: off mainnet
+  it just takes the simulated branch instead of calling Bags, and either way
+  it spends nothing.
+- One creator token per user is a UI-only rule (KAN-29 follow-up): a
+  verified `TOKEN#` record (`lib/db.ts` `getVerifiedBagsToken`) makes
+  `components/BagsLaunchClaim.tsx` render `components/BagsTokenCard.tsx`
+  instead of the launch button. Not enforced in `POST /api/bags/verify` or
+  the DB — a second real launch by the same user would still verify and
+  overwrite/add a `TOKEN#` item if attempted outside the UI.
+- Bags.fm in-app trading (buy/sell/price, KAN-52): still MOCKED
+  (`lib/bags.ts` `buyCreatorToken`/`sellCreatorToken`/`getBagsTokenPrice`,
+  simulated delays, no network calls). `components/InvestModal.tsx` still
+  shows simulated prices — this has not been touched by KAN-29.
 
 #### RPC access
 All browser RPC traffic goes through `/api/rpc` (`app/api/rpc/route.ts`),
@@ -204,12 +239,17 @@ and likes) retrievable in a single query.
 | Like | `MEME#<memeId>` | `LIKE#<userId>` | `createdAt` (one item per user = dedupe) |
 | PendingUpload | `PENDING#<pendingId>` | `PENDING#<pendingId>` | `pendingId`, `creatorId`, `s3Key`, `caption`, `status`, `reason?`, `createdAt`, `expiresAt` (TTL, 24h) |
 | NftMetadata | `NFTMETA#<id>` | `NFTMETA#<id>` | `nftMetaId`, `name`, `image_url`, `description`, `createdAt` |
+| BagsToken (KAN-29) | `USER#<creatorId>` | `TOKEN#<tokenMint>` | `creatorId`, `tokenMint`, `symbol`\*\*, `name`\*\*, `partnerAttributed`, `verifiedAt`. Shares the User item's PK by design |
 | RateLimit counter | `RATE#<identity>` | `<limitKey>#<windowStart>` | `requestCount`, `expiresAt` (TTL, window + 60s) |
 | Feed item | `FEED#GLOBAL` | `<score padded to 15 digits>#<memeId>` | snapshot: `memeId`, `creatorId`, `s3Key`, `caption`, `score`, plus `GSI3PK`/`GSI3SK`. Written only by StreamHandler |
 | Leaderboard | `LEADERBOARD#GLOBAL` | `USER#<creatorId>` | `creatorId`, `memeCount`, incremented/decremented by StreamHandler |
 
 \* `creatorId` is fixed.  + `ownerId` is currently always equal to
-`creatorId`; nothing changes it yet (see NFT resale below).
+`creatorId`; nothing changes it yet (see NFT resale below).  \*\* `symbol`/
+`name` on BagsToken are as supplied by the creator when they claim the
+launch, not independently verified against Bags — neither of Bags' two GET
+endpoints returns a token name or symbol. `tokenMint` and `partnerAttributed`
+are the verified fields.
 
 Meme `status` values in code: `active`, `listed` (set when `listingPrice` is
 present at finalize), `pending_review` (set by ModerationHandler). Items
@@ -249,6 +289,8 @@ user's likes is not implemented.
 
 ### Served on the base table (no GSI)
 - Comments: `PK = MEME#<id>`, `SK begins_with COMMENT#`
+- Verified Bags tokens for a creator: `PK = USER#<creatorId>`,
+  `SK begins_with TOKEN#` (KAN-29)
 - "Did user like?": `GetItem` on `LIKE#<userId>`
 - Meme of the day: `Query PK = FEED#GLOBAL`, `ScanIndexForward: false`,
   `Limit: 1`. This is why the feed item SK zero-pads the score to 15 digits:
@@ -341,6 +383,7 @@ values, not measured thresholds.
 - Per IP on unauthenticated routes: 60 rpc/min, 10 logins/15min,
   5 signups/hour, 3 forgot-password/hour, 10 reset-password/hour,
   10 confirm/hour, 20 wallet-nonce/15min, 20 wallet-verify/15min.
+- Bags launch verification (KAN-29), per day: 10/user, 20/IP.
 
 Mechanics (`lib/rate-limit.ts`):
 - FIXED WINDOW, not sliding or token bucket. A caller can burst up to ~2x at
@@ -428,4 +471,7 @@ An operator review path is PLANNED and unbuilt.
   application code.
 - User on-chain actions are signed client-side. Platform on-chain actions are
   PLANNED to be signed server-side in Lambda; no such path exists yet.
-- Bags.fm is mocked. Do not wire real mainnet calls without explicit approval.
+- Bags.fm token launch is a link-out (KAN-29); MemeDay never signs a Bags
+  transaction. In-app trading (buy/sell/price) is still mocked (KAN-52). Do
+  not wire a real mainnet spend or a server-side Bags signer without explicit
+  approval.

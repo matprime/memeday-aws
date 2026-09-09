@@ -60,6 +60,24 @@ export const RATE_LIMITS = {
   // caller is authenticated.
   reportPerUser: { key: "reportPerUser", max: 10, windowSeconds: DAY },
   reportPerIp: { key: "reportPerIp", max: 20, windowSeconds: DAY },
+
+  // ── Bags launch verification (KAN-29) ───────────────────────────────────
+  // Read-only against Bags and writes one DynamoDB item, so this guards
+  // against someone hammering the Bags API through us, not a spend budget.
+  bagsVerifyPerUser: { key: "bagsVerifyPerUser", max: 10, windowSeconds: DAY },
+  bagsVerifyPerIp: { key: "bagsVerifyPerIp", max: 20, windowSeconds: DAY },
+
+  // ── Bags launch config (KAN-75) ─────────────────────────────────────────
+  // The route gained auth to compute walletAuthed server-side. Per-user only:
+  // an unauthenticated caller never reaches the counter, it gets 401 first.
+  bagsLaunchConfigPerUser: { key: "bagsLaunchConfigPerUser", max: 30, windowSeconds: DAY },
+
+  // ── Wallet link (KAN-75) ─────────────────────────────────────────────────
+  // Same challenge/signature verification cost as wallet login, so the per-IP
+  // ceiling mirrors walletVerifyPerIp. Per-user added because, unlike login,
+  // the caller is already authenticated.
+  walletLinkPerUser: { key: "walletLinkPerUser", max: 10, windowSeconds: DAY },
+  walletLinkPerIp: { key: "walletLinkPerIp", max: 20, windowSeconds: 15 * MINUTE },
 } as const satisfies Record<string, RateLimitDef>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
