@@ -6,8 +6,8 @@ Built for production scale on Amazon DynamoDB (single-table, three sparse GSIs, 
 
 ## What works today
 
-- Meme upload, browsing, and voting
-- Comments with DynamoDB persistence
+- Meme upload, browsing, voting and commenting
+- Comments and votes with DynamoDB persistence
 - Cognito auth: email sign-up + wallet sign-in (signature verified server-side, Cognito-issued session)
 - Creator leaderboard and trending tokens page
 - Daily featured meme
@@ -15,21 +15,24 @@ Built for production scale on Amazon DynamoDB (single-table, three sparse GSIs, 
 - Solana Pay QR tipping: scan to send SOL directly to the creator's wallet
 - Streams-driven materialized views for trending and leaderboard (DynamoDB Streams -> Lambda)
 - On-chain NFT minting via Metaplex on Solana devnet
+- Social sharing to X, Instagram, TikTok, and others
+- Creator token launch via Bags SDK
+- S3 event-triggered upload validation (type/size) Lambda
+- CloudFront (OAC) for media reads; retire the temporary image proxy
 
 ## In development
 
+- Trading of memes
+- Trading of user tokens can be done directly in APP interface, not only in bags interface
+- Trade royalties for creators of meme NFT
+- Email users can create NFT and token on bags, buy and sell memes, they can do all what wallet users can do
 - DynamoDB Global Tables for active-active multi-region
-- CloudFront (OAC) for media reads; retire the temporary image proxy
 - Write-sharded counters + subscription-based live vote updates for viral memes
-- S3 event-triggered upload validation (type/size) Lambda
 - Isolated on-chain signer in AWS Secrets Manager + idempotent daily commemorative mint
 - Nightly cron: lock the daily winner and decay scores so fresh content rises
-- Least-privilege runtime IAM scoped to DynamoDB, Cognito, S3
-- Social sharing to X, Instagram, TikTok, and others
-- Creator token launch via Bags SDK (mocked; mainnet, post-deadline)
 - Platform engagement token: earned via logins, votes, referrals; stakeable for a share of trading fees; with vesting and anti-abuse (diminishing per-day returns, wallet-history requirement)
 - Token-holder rewards: featured comment placement, creator badges, revenue share scaled by holding
-- NFT minting on mainnet (already live on devnet)
+
 
 ## Tech stack
 
