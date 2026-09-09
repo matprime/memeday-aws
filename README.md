@@ -15,6 +15,8 @@ Built for production scale on Amazon DynamoDB (single-table, three sparse GSIs, 
 - Solana Pay QR tipping: scan to send SOL directly to the creator's wallet
 - Streams-driven materialized views for trending and leaderboard (DynamoDB Streams -> Lambda)
 - On-chain NFT minting via Metaplex on Solana devnet
+- Social sharing to X, Instagram, TikTok, and others
+- Creator token launch via Bags SDK
 
 ## In development
 
@@ -24,12 +26,8 @@ Built for production scale on Amazon DynamoDB (single-table, three sparse GSIs, 
 - S3 event-triggered upload validation (type/size) Lambda
 - Isolated on-chain signer in AWS Secrets Manager + idempotent daily commemorative mint
 - Nightly cron: lock the daily winner and decay scores so fresh content rises
-- Least-privilege runtime IAM scoped to DynamoDB, Cognito, S3
-- Social sharing to X, Instagram, TikTok, and others
-- Creator token launch via Bags SDK (mocked; mainnet, post-deadline)
 - Platform engagement token: earned via logins, votes, referrals; stakeable for a share of trading fees; with vesting and anti-abuse (diminishing per-day returns, wallet-history requirement)
 - Token-holder rewards: featured comment placement, creator badges, revenue share scaled by holding
-- NFT minting on mainnet (already live on devnet)
 
 ## Tech stack
 
