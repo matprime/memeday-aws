@@ -14,6 +14,7 @@ import {
   SOLANA_ENABLED,
   SOLANA_DISABLED_MESSAGE,
 } from "@/lib/solana/network";
+import { NFT_STORAGE_PROVIDER, NFT_ROYALTY_BASIS_POINTS } from "@/lib/nft-config";
 
 export const metadata: Metadata = {
   title: "MemeDay — Creator Economy on Solana",
@@ -35,6 +36,8 @@ export default function RootLayout({
           explorerCluster={SOLANA_EXPLORER_CLUSTER}
           enabled={SOLANA_ENABLED}
           disabledMessage={SOLANA_DISABLED_MESSAGE}
+          storageProvider={NFT_STORAGE_PROVIDER}
+          royaltyBasisPoints={NFT_ROYALTY_BASIS_POINTS}
         >
           <SessionSync />
           <WalletAuthSync />

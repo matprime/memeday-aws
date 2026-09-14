@@ -99,6 +99,45 @@ export interface DbPendingUpload {
   createdAt: string;
 }
 
+// Mint request state machine. One row per asset (see DbMintRequest.assetId),
+// created the first time a mint is attempted and then transitioned in place —
+// a retry reuses the same row rather than creating a second one, which is what
+// makes "one asset, at most one NFT" enforceable.
+export type MintStatus =
+  | "PENDING"
+  | "UPLOADING_PICTURE"
+  | "UPLOADING_METADATA"
+  | "AWAITING_SIGNATURE"
+  | "MINTING"
+  | "CONFIRMED"
+  | "SIGNATURE_REJECTED"
+  | "FAILED";
+
+export interface DbMintRequest {
+  mintRequestId: string;
+  assetId: string;          // pendingUploadId, which finalizeMeme reuses as memeId
+  userId: string;           // Cognito sub — the only identity allowed to advance it
+  ownerWallet: string;      // fee payer, signer, and initial owner; never the app
+  network: string;          // SOLANA_NETWORK at prepare time
+  status: MintStatus;
+  pictureUri?: string;      // set on leaving UPLOADING_PICTURE
+  metadataUri?: string;     // set on leaving UPLOADING_METADATA; goes on-chain
+  // Asset keypair public key, recorded BEFORE the user signs. This is the
+  // reconciliation anchor: with it the server can ask the chain whether the
+  // mint landed without needing the transaction signature, which is what
+  // recovers the "chain succeeded, our DB write did not" case.
+  assetAddress?: string;
+  mintAddress?: string;     // == assetAddress once verified on-chain
+  txSignature?: string;
+  confirmedAt?: string;
+  nonce?: string;           // short-lived, bounds replay of a prepare response
+  nonceExpiresAt?: number;  // epoch seconds
+  attempts: number;         // signature attempts, incremented on each prepare
+  lastError?: string;       // sanitized; never raw RPC/wallet provider text
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DbComment {
   id: string;
   memeId: string;
