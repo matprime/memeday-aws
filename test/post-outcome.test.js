@@ -11,7 +11,7 @@ test("postOutcome: a plain post reports success", async () => {
   const { postOutcome } = await load();
   const outcome = postOutcome({ caption: "Elon is a memelord", isNFT: false, minted: false });
   assert.strictEqual(outcome.tone, "success");
-  assert.match(outcome.message, /^Meme posted! "Elon is a memelord…"$/);
+  assert.match(outcome.message, /^Meme posted! "Elon is a memelord"$/);
 });
 
 test("postOutcome: a minted NFT reports success", async () => {
@@ -31,8 +31,16 @@ test("postOutcome: an NFT that was asked for and not minted is not a plain succe
   assert.doesNotMatch(outcome.message, /^Meme posted! /);
 });
 
-test("postOutcome: the caption is truncated to 30 characters", async () => {
+test("postOutcome: a caption that was cut is marked, one that fits is not", async () => {
   const { postOutcome } = await load();
-  const outcome = postOutcome({ caption: "x".repeat(50), isNFT: false, minted: false });
-  assert.strictEqual(outcome.message, `Meme posted! "${"x".repeat(30)}…"`);
+
+  const cut = postOutcome({ caption: "x".repeat(50), isNFT: false, minted: false });
+  assert.strictEqual(cut.message, `Meme posted! "${"x".repeat(30)}…"`);
+
+  // Exactly at the limit is not a truncation.
+  const exact = postOutcome({ caption: "x".repeat(30), isNFT: false, minted: false });
+  assert.strictEqual(exact.message, `Meme posted! "${"x".repeat(30)}"`);
+
+  const short = postOutcome({ caption: "test", isNFT: false, minted: false });
+  assert.strictEqual(short.message, 'Meme posted! "test"');
 });

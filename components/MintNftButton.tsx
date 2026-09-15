@@ -34,6 +34,12 @@ interface Props {
   // carried its price through /api/memes, so a retry here should show that
   // rather than a blank field.
   defaultPrice?: number;
+  // When given, only this wallet sees the mint UI. Checked here rather than by
+  // the caller so a wallet that drops out momentarily — which is what a
+  // declined prompt looks like from the adapter — hides the controls without
+  // unmounting this component and discarding the price the user typed.
+  // The server re-checks ownership regardless (see lib/mint-service.ts).
+  creatorWallet?: string;
   onMinted?: () => void;
 }
 
@@ -46,7 +52,14 @@ function readableError(err: unknown): string {
   return message;
 }
 
-export function MintNftButton({ memeId, imageUrl, caption, defaultPrice, onMinted }: Props) {
+export function MintNftButton({
+  memeId,
+  imageUrl,
+  caption,
+  defaultPrice,
+  creatorWallet,
+  onMinted,
+}: Props) {
   const { rpcUrl, enabled, disabledMessage, network, storageProvider, royaltyBasisPoints } =
     useSolanaConfig();
   const wallet = useWallet();
@@ -55,8 +68,12 @@ export function MintNftButton({ memeId, imageUrl, caption, defaultPrice, onMinte
   const [mintStatus, setMintStatus] = useState<MintStatus | null>(null);
   const [price, setPrice] = useState(String(defaultPrice ?? "0.01"));
 
-  // Nothing to offer without a wallet to pay and sign with.
-  if (!wallet.publicKey) return null;
+  // Nothing to offer without a wallet to pay and sign with, and nothing to
+  // offer anyone but the creator. Returning null keeps the component mounted,
+  // so `price` survives a wallet that reconnects.
+  const connected = wallet.publicKey?.toBase58();
+  if (!connected) return null;
+  if (creatorWallet && connected !== creatorWallet) return null;
 
   const requireToken = async (): Promise<string> => {
     const token = await getAccessToken();

@@ -14,7 +14,10 @@ export function postOutcome(params: {
   minted: boolean;
 }): PostOutcome {
   const { caption, isNFT, minted } = params;
-  const quoted = `"${caption.slice(0, 30)}…"`;
+  // The ellipsis marks a caption that was actually cut, rather than following
+  // every name regardless — "test…" read as though something was missing.
+  const shown = caption.slice(0, 30);
+  const quoted = `"${shown}${shown.length < caption.length ? "…" : ""}"`;
   if (isNFT && !minted) {
     return {
       tone: "warning",
