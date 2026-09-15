@@ -30,6 +30,10 @@ interface Props {
   memeId: string;
   imageUrl: string;
   caption: string;
+  // The meme's current price, when it has one. A mint at post time already
+  // carried its price through /api/memes, so a retry here should show that
+  // rather than a blank field.
+  defaultPrice?: number;
   onMinted?: () => void;
 }
 
@@ -42,16 +46,23 @@ function readableError(err: unknown): string {
   return message;
 }
 
-export function MintNftButton({ memeId, imageUrl, caption, onMinted }: Props) {
+export function MintNftButton({ memeId, imageUrl, caption, defaultPrice, onMinted }: Props) {
   const { rpcUrl, enabled, disabledMessage, network, storageProvider, royaltyBasisPoints } =
     useSolanaConfig();
   const wallet = useWallet();
   const { addToast } = useAppStore();
   const [minting, setMinting] = useState(false);
   const [mintStatus, setMintStatus] = useState<MintStatus | null>(null);
+  const [price, setPrice] = useState(String(defaultPrice ?? "0.01"));
 
   // Nothing to offer without a wallet to pay and sign with.
   if (!wallet.publicKey) return null;
+
+  const requireToken = async (): Promise<string> => {
+    const token = await getAccessToken();
+    if (!token) throw new Error("Session expired — sign in again");
+    return token;
+  };
 
   const handleMint = async () => {
     if (minting) return;
@@ -72,13 +83,28 @@ export function MintNftButton({ memeId, imageUrl, caption, onMinted }: Props) {
         royaltyBasisPoints,
         // The mint spans several round-trips, so the token is renewed between
         // steps rather than captured once up front.
-        getToken: async () => {
-          const token = await getAccessToken();
-          if (!token) throw new Error("Session expired — sign in again");
-          return token;
-        },
+        getToken: requireToken,
         onStage: setMintStatus,
       });
+      // The price is a separate write, and deliberately not fatal: the NFT
+      // exists either way, and losing the post over a price the user can set
+      // again would be the worse outcome.
+      const listingPrice = parseFloat(price);
+      if (Number.isFinite(listingPrice) && listingPrice > 0) {
+        try {
+          const res = await fetch(`/api/memes/${memeId}/listing`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${await requireToken()}`,
+            },
+            body: JSON.stringify({ listingPrice }),
+          });
+          if (!res.ok) throw new Error("price");
+        } catch {
+          addToast("NFT minted, but the price could not be saved.", "error");
+        }
+      }
       addToast("NFT minted on Solana!", "success");
       onMinted?.();
     } catch (err) {
@@ -95,13 +121,33 @@ export function MintNftButton({ memeId, imageUrl, caption, onMinted }: Props) {
   };
 
   return (
-    <button
-      onClick={handleMint}
-      disabled={minting}
-      className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100"
-    >
-      {minting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-      {minting ? MINT_STEP_LABELS[mintStatus ?? "PENDING"] : "Mint as NFT"}
-    </button>
+    <div className="space-y-2">
+      <div>
+        <label
+          htmlFor={`nft-price-${memeId}`}
+          className="text-xs text-gray-400 mb-1.5 block font-medium"
+        >
+          NFT Price (SOL)
+        </label>
+        <input
+          id={`nft-price-${memeId}`}
+          type="number"
+          min="0.01"
+          step="0.01"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          disabled={minting}
+          className="w-full bg-bg/60 border border-border rounded-xl px-4 py-2.5 text-white font-mono focus:outline-none focus:border-accent disabled:opacity-40"
+        />
+      </div>
+      <button
+        onClick={handleMint}
+        disabled={minting}
+        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white bg-accent hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100"
+      >
+        {minting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+        {minting ? MINT_STEP_LABELS[mintStatus ?? "PENDING"] : "Mint as NFT"}
+      </button>
+    </div>
   );
 }

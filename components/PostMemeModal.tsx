@@ -42,6 +42,7 @@ export function PostMemeModal({ onClose }: Props) {
     caption: string;
     minted: boolean;
     mintError: string | null;
+    listingPrice?: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -317,6 +318,7 @@ export function PostMemeModal({ onClose }: Props) {
         caption: caption.trim(),
         minted: !!mintAddress,
         mintError,
+        listingPrice: isNFT ? parseFloat(nftPrice) : undefined,
       });
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Failed to post meme.", "error");
@@ -379,6 +381,7 @@ export function PostMemeModal({ onClose }: Props) {
                   memeId={postedMeme.memeId}
                   imageUrl={postedMeme.imageUrl}
                   caption={postedMeme.caption}
+                  defaultPrice={postedMeme.listingPrice}
                   onMinted={() => {
                     setPostedMeme((prev) =>
                       prev ? { ...prev, minted: true, mintError: null } : prev

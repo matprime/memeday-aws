@@ -200,6 +200,7 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
             memeId={meme.id}
             imageUrl={meme.imageUrl}
             caption={meme.caption}
+            defaultPrice={meme.listingPrice}
             onMinted={() => router.refresh()}
           />
         )}

@@ -1138,6 +1138,32 @@ export async function setMemeNftMint(memeId: string, nftMint: string): Promise<b
   }
 }
 
+// A price is only meaningful once the NFT exists, so the condition requires
+// the mint address rather than trusting the caller's ordering. status follows
+// the price the same way createMeme derives it, which is what MemeCard's Buy
+// button reads. Returns false rather than throwing when the meme is gone or
+// unminted — that is a stale client, not a server fault.
+export async function setMemeListingPrice(memeId: string, price: number): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+        UpdateExpression: "SET listingPrice = :price, #s = :listed",
+        ConditionExpression: "attribute_exists(PK) AND attribute_exists(nftMint)",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":price": price, ":listed": "listed" },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 // Attaches a fresh nonce without moving the request. Separate from
 // transitionMintRequest because a status-to-itself "transition" reads as a
 // mistake and would bypass the transition table's guarantees. The status is
