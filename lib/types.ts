@@ -152,6 +152,7 @@ export interface DbComment {
 // User row, so a profile page read can pull both in one Query.
 export interface DbBagsToken {
   creatorId: string;
+  memeId: string;             // the meme this token was launched from; absent on rows bound before per-meme binding
   tokenMint: string;
   symbol: string;             // as supplied by the creator at claim time, not independently verified against Bags
   name: string;                // same caveat as symbol

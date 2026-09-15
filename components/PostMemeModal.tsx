@@ -388,7 +388,11 @@ export function PostMemeModal({ onClose }: Props) {
                 />
               )}
               {authMethod === "wallet" && (
-                <BagsLaunchClaim imageUrl={postedMeme.imageUrl} defaultName={postedMeme.caption} />
+                <BagsLaunchClaim
+                  memeId={postedMeme.memeId}
+                  imageUrl={postedMeme.imageUrl}
+                  defaultName={postedMeme.caption}
+                />
               )}
             </div>
             <div className="p-5 pt-0">
