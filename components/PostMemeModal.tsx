@@ -374,7 +374,7 @@ export function PostMemeModal({ onClose }: Props) {
                 alt="Posted meme"
                 className="mx-auto max-h-40 w-auto rounded-lg object-contain"
               />
-              {isNFT && !postedMeme.minted && (
+              {!postedMeme.minted && (
                 <MintNftButton
                   memeId={postedMeme.memeId}
                   imageUrl={postedMeme.imageUrl}
@@ -480,7 +480,7 @@ export function PostMemeModal({ onClose }: Props) {
             <div className="space-y-3">
               <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
                 {storageProvider === "irys"
-                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. The credit covers several uploads, so later mints skip the top-up and ask twice."
+                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. Later mints skip the top-up."
                   : "Your wallet will ask for 1 approval: the mint itself."}
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>
@@ -499,9 +499,8 @@ export function PostMemeModal({ onClose }: Props) {
               a user looking for it in the form has no way to know it is coming.
               Gated to match where BagsLaunchClaim actually mounts. */}
           {authMethod === "wallet" && (
-            <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
-              Launching a creator token on Bags comes after your meme posts — the
-              option appears on the confirmation screen.
+            <p className="text-sm text-gray-300 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
+              Token mint comes after meme upload.
             </p>
           )}
 

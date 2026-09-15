@@ -219,6 +219,30 @@ test("an illegal transition is refused", opts, async () => {
   }
 });
 
+// KAN-11: a declined Arweave top-up leaves the request in UPLOADING_PICTURE
+// with no pictureUri recorded, and the retry must not ask for that step again.
+// Re-entry stays refused here — it is the same guard that stops two tabs both
+// paying to upload — so the skip lives in the client (see lib/nft.ts).
+test("re-entering UPLOADING_PICTURE is refused, so a retry must skip it", opts, async () => {
+  const { createMintRequest, transitionMintRequest, MintTransitionError } = await importDb();
+  const assetId = randomUUID();
+  try {
+    await createMintRequest(baseReq(assetId));
+    await transitionMintRequest(assetId, "UPLOADING_PICTURE");
+    await assert.rejects(
+      () => transitionMintRequest(assetId, "UPLOADING_PICTURE"),
+      (err) => err instanceof MintTransitionError
+    );
+    // A retry that skips the redundant step still gets where it was going.
+    const next = await transitionMintRequest(assetId, "UPLOADING_METADATA", {
+      pictureUri: "https://arweave.test/pic",
+    });
+    assert.strictEqual(next.pictureUri, "https://arweave.test/pic");
+  } finally {
+    await cleanup(assetId);
+  }
+});
+
 test("transitioning a row that does not exist is refused", opts, async () => {
   const { transitionMintRequest, MintTransitionError } = await importDb();
   await assert.rejects(
