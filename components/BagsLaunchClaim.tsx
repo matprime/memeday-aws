@@ -233,7 +233,7 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
 
         {/* Required disclosure, shown before the user can leave for bags.fm. The
             partner cut comes off Bags' own platform fee, not the creator's —
-            see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
+            see lib/bags-server.ts getPartnerAttribution for how that's verified. */}
         <p className="text-xs text-gray-500 mb-3">
           MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
           tokens launched through this link. This does not reduce your own creator fees.

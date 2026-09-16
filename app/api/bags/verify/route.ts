@@ -135,7 +135,7 @@ export async function POST(req: Request) {
       tokenMint: result.tokenMint,
       symbol: symbol.trim(),
       name: name.trim(),
-      partnerAttributed: result.partnerAttributed,
+      partnerAttribution: result.partnerAttribution,
     });
   } catch (err) {
     if (err instanceof BagsTokenAlreadyBoundError) {

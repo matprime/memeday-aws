@@ -1,3 +1,5 @@
+import type { PartnerAttribution } from "./bags-server";
+
 export interface Creator {
   id: string;
   walletAddress: string;
@@ -156,7 +158,7 @@ export interface DbBagsToken {
   tokenMint: string;
   symbol: string;             // as supplied by the creator at claim time, not independently verified against Bags
   name: string;                // same caveat as symbol
-  partnerAttributed: boolean; // verified server-side via GET /token-launch accountKeys
+  partnerAttribution: PartnerAttribution; // verified server-side by reading the on-chain FeeShareConfig account (fee-share-v2)
   verifiedAt: string;
 }
 
