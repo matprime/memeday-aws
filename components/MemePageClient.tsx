@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { DbMeme, DbComment, Creator } from "@/lib/types";
 import { MemeActionBar } from "./MemeActionBar";
 import { CommentSection } from "./CommentSection";
+import { MemeBagsLaunch } from "./MemeBagsLaunch";
 import { EVENTS, track } from "@/lib/analytics";
 import { CHANNELS } from "./ShareBar";
 
@@ -35,6 +36,14 @@ export function MemePageClient({ meme, creator, initialComments }: Props) {
   return (
     <>
       <MemeActionBar meme={meme} creator={creator} commentCount={commentCount} />
+      <div className="mt-6">
+        <MemeBagsLaunch
+          memeId={meme.id}
+          imageUrl={meme.imageUrl}
+          caption={meme.caption}
+          creatorId={meme.creatorId}
+        />
+      </div>
       <div className="mt-8 pt-8 border-t border-border">
         <CommentSection
           memeId={meme.id}

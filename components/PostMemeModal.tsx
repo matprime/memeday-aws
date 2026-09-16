@@ -10,21 +10,10 @@ import { createMintUmi, mintMemeNft, prefundStorage } from "@/lib/nft";
 import { EVENTS, track } from "@/lib/analytics";
 import { useSolanaConfig } from "@/components/WalletProvider";
 import { BagsLaunchClaim } from "@/components/BagsLaunchClaim";
+import { MintNftButton, MINT_STEP_LABELS } from "@/components/MintNftButton";
 import { useDialogDismiss } from "@/lib/useDialogDismiss";
+import { postOutcome } from "@/lib/post-outcome";
 import type { MintStatus } from "@/lib/types";
-
-// The mint is several server round-trips and an upload before the wallet is
-// even asked, so the label follows the mint request's own status rather than
-// claiming "approve in wallet" for the whole minute. The approval numbers match
-// the count promised before the user starts — storing the image on Arweave
-// costs a payment and a signature, then the mint itself.
-const MINT_STEP_LABELS: Record<string, string> = {
-  PENDING: "Preparing mint…",
-  UPLOADING_PICTURE: "Storing image on Arweave… (approve in wallet)",
-  UPLOADING_METADATA: "Preparing NFT metadata…",
-  AWAITING_SIGNATURE: "Minting NFT on Solana… (approve in wallet)",
-  MINTING: "Confirming on-chain…",
-};
 
 interface Props {
   onClose: () => void;
@@ -47,7 +36,14 @@ export function PostMemeModal({ onClose }: Props) {
   const [step, setStep] = useState<"form" | "uploading" | "validating" | "linking" | "minting" | "posting">("form");
   const [mintStatus, setMintStatus] = useState<MintStatus | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [postedMeme, setPostedMeme] = useState<{ imageUrl: string; caption: string } | null>(null);
+  const [postedMeme, setPostedMeme] = useState<{
+    memeId: string;
+    imageUrl: string;
+    caption: string;
+    minted: boolean;
+    mintError: string | null;
+    listingPrice?: number;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Holds user input, so backdrop click never dismisses it (KAN-74) — X only.
@@ -239,6 +235,7 @@ export function PostMemeModal({ onClose }: Props) {
 
       // 3. Mint NFT on Solana (Phantom will prompt for signature)
       let mintAddress: string | null = null;
+      let mintError: string | null = null;
       if (isNFT) {
         if (!enabled) {
           addToast(disabledMessage, "error");
@@ -277,8 +274,11 @@ export function PostMemeModal({ onClose }: Props) {
             // A failed mint never costs the user their post. The image is
             // already uploaded and validated, so discarding it here would lose
             // that too — on top of whatever the mint already cost them. The
-            // meme goes up un-minted and the reason is shown.
-            addToast(err instanceof Error ? err.message : "Minting failed", "error");
+            // meme goes up un-minted and the reason is shown — on the success
+            // screen too, which offers the mint again rather than reporting a
+            // plain "Meme posted!" for a post that lost its NFT.
+            mintError = err instanceof Error ? err.message : "Minting failed";
+            addToast(mintError, "error");
           } finally {
             setMintStatus(null);
           }
@@ -306,12 +306,20 @@ export function PostMemeModal({ onClose }: Props) {
       const { meme } = await res.json();
       track(EVENTS.memeUploaded, { memeId: meme?.id, isNFT, minted: !!mintAddress });
 
-      addToast(`Meme posted! "${caption.slice(0, 30)}…"`, "success");
+      const outcome = postOutcome({ caption: caption.trim(), isNFT, minted: !!mintAddress });
+      addToast(outcome.message, outcome.tone === "success" ? "success" : "error");
       router.refresh();
       // Stay open on a success screen instead of closing: the Bags launch
       // action needs the meme's public CloudFront URL, which only exists
       // once the API response comes back (see components/BagsLaunchClaim.tsx).
-      setPostedMeme({ imageUrl: meme.imageUrl, caption: caption.trim() });
+      setPostedMeme({
+        memeId: meme.id,
+        imageUrl: meme.imageUrl,
+        caption: caption.trim(),
+        minted: !!mintAddress,
+        mintError,
+        listingPrice: isNFT ? parseFloat(nftPrice) : undefined,
+      });
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Failed to post meme.", "error");
     } finally {
@@ -319,6 +327,10 @@ export function PostMemeModal({ onClose }: Props) {
       setStep("form");
     }
   };
+
+  const outcome = postedMeme
+    ? postOutcome({ caption: postedMeme.caption, isNFT, minted: postedMeme.minted })
+    : null;
 
   const stepLabel =
     step === "uploading" ? "Uploading image…" :
@@ -341,20 +353,49 @@ export function PostMemeModal({ onClose }: Props) {
           </button>
         </div>
 
-        {postedMeme ? (
+        {postedMeme && outcome ? (
           <>
             <div className="p-5 space-y-4">
-              <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/30 rounded-xl px-4 py-3 text-sm text-green-400">
-                <Zap size={14} />
-                Meme posted! &quot;{postedMeme.caption.slice(0, 30)}…&quot;
+              <div
+                className={`flex items-start gap-2 border rounded-xl px-4 py-3 text-sm ${
+                  outcome.tone === "success"
+                    ? "bg-green-900/20 border-green-700/30 text-green-400"
+                    : "bg-yellow-900/20 border-yellow-700/30 text-yellow-400"
+                }`}
+              >
+                <Zap size={14} className="mt-0.5 shrink-0" />
+                <div>
+                  <p>{outcome.message}</p>
+                  {postedMeme.mintError && (
+                    <p className="text-xs text-yellow-500/80 mt-1">{postedMeme.mintError}</p>
+                  )}
+                </div>
               </div>
               <img
                 src={postedMeme.imageUrl}
                 alt="Posted meme"
                 className="mx-auto max-h-40 w-auto rounded-lg object-contain"
               />
+              {!postedMeme.minted && (
+                <MintNftButton
+                  memeId={postedMeme.memeId}
+                  imageUrl={postedMeme.imageUrl}
+                  caption={postedMeme.caption}
+                  defaultPrice={postedMeme.listingPrice}
+                  onMinted={() => {
+                    setPostedMeme((prev) =>
+                      prev ? { ...prev, minted: true, mintError: null } : prev
+                    );
+                    router.refresh();
+                  }}
+                />
+              )}
               {authMethod === "wallet" && (
-                <BagsLaunchClaim imageUrl={postedMeme.imageUrl} defaultName={postedMeme.caption} />
+                <BagsLaunchClaim
+                  memeId={postedMeme.memeId}
+                  imageUrl={postedMeme.imageUrl}
+                  defaultName={postedMeme.caption}
+                />
               )}
             </div>
             <div className="p-5 pt-0">
@@ -446,7 +487,7 @@ export function PostMemeModal({ onClose }: Props) {
             <div className="space-y-3">
               <p className="text-xs text-gray-400 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
                 {storageProvider === "irys"
-                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. The credit covers several uploads, so later mints skip the top-up and ask twice."
+                  ? "Your wallet will ask for up to 3 approvals (top up Arweave storage credit, upload signature, then mint), ~1 min. Later mints skip the top-up."
                   : "Your wallet will ask for 1 approval: the mint itself."}
               </p>
               <label className="text-xs text-gray-400 mb-1.5 block font-medium">NFT Price (SOL)</label>
@@ -459,6 +500,15 @@ export function PostMemeModal({ onClose }: Props) {
                 className="w-full bg-bg/60 border border-border rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-accent"
               />
             </div>
+          )}
+
+          {/* The Bags launch card only exists on the success screen below, so
+              a user looking for it in the form has no way to know it is coming.
+              Gated to match where BagsLaunchClaim actually mounts. */}
+          {authMethod === "wallet" && (
+            <p className="text-sm text-gray-300 bg-bg/60 border border-border/50 rounded-xl px-4 py-3">
+              Token mint comes after meme upload.
+            </p>
           )}
 
           {!publicKey && (

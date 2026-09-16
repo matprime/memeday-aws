@@ -9,12 +9,15 @@ import { BagsTokenCard } from "@/components/BagsTokenCard";
 import { EVENTS, track } from "@/lib/analytics";
 
 interface Props {
-  // Absent = claim-only mode (KAN-79): no meme was just posted, so there is
-  // nothing to launch from here. Used by BagsProfileClaim to offer the
-  // paste-the-mint recovery panel from a profile page instead of only from
-  // the post-meme success screen.
-  imageUrl?: string;
+  // The meme this token belongs to. A token is bound to one meme and only its
+  // uploader may bind it (KAN-11), so every launch and every claim names one.
+  memeId: string;
+  imageUrl: string;
   defaultName: string;
+  // Shows the paste-the-mint panel without waiting for a launch to be started
+  // here (KAN-79 recovery): the meme page is where a creator comes back after
+  // bags.fm interrupted them, and the tab that opened the launch is long gone.
+  alwaysShowClaim?: boolean;
 }
 
 interface TokenSummary {
@@ -28,12 +31,11 @@ interface TokenSummary {
 // and a simulated no-op everywhere else (KAN-29 follow-up, correction 1):
 // GET /api/bags/launch-config and POST /api/bags/verify decide live vs mock
 // server-side, this component just renders whichever they hand back.
-export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
+export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim }: Props) {
   const { addToast } = useAppStore();
-  const claimOnly = !imageUrl;
 
-  // Whether the caller already has a verified token drives launch-button vs
-  // card (correction 3). null = still checking.
+  // Whether this meme already has a verified token drives launch-button vs
+  // card. null = still checking.
   const [existingToken, setExistingToken] = useState<TokenSummary | null | undefined>(undefined);
 
   const [name, setName] = useState(defaultName.slice(0, 32));
@@ -53,7 +55,7 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
       try {
         const accessToken = await getAccessToken();
         if (!accessToken) return;
-        const res = await fetch("/api/bags/my-token", {
+        const res = await fetch(`/api/bags/my-token?memeId=${encodeURIComponent(memeId)}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         if (!res.ok || cancelled) return;
@@ -67,7 +69,7 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [memeId]);
 
   const verify = async (tokenMint?: string) => {
     setVerifying(true);
@@ -79,7 +81,7 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
       const res = await fetch("/api/bags/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ tokenMint, name, symbol: ticker }),
+        body: JSON.stringify({ memeId, tokenMint, name, symbol: ticker }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Verification failed");
@@ -175,12 +177,17 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
 
   return (
     <div className="space-y-4">
-      {claimOnly ? (
-        // Claim-only mode (KAN-79): no launch button, no launch disclosure —
-        // there is no meme image to launch from here. Name/ticker stay
-        // because POST /api/bags/verify requires both. Labels match the
-        // launch-card inputs below (KAN-75) for consistency.
-        <div className="space-y-2">
+      <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Zap size={16} className="text-bags" />
+          <p className="text-sm font-bold text-bags">Launch a Creator Token on Bags</p>
+        </div>
+        <p className="text-xs text-gray-400 mb-3">
+          Opens bags.fm in a new tab with your meme&apos;s image and details prefilled. You
+          connect and sign on Bags — MemeDay never holds your keys or signs anything here.
+        </p>
+
+        <div className="space-y-2 mb-3">
           <div>
             <label htmlFor="bags-token-name" className="text-xs text-gray-400 mb-1.5 block font-medium">
               Token name
@@ -209,88 +216,47 @@ export function BagsLaunchClaim({ imageUrl, defaultName }: Props) {
               className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
             />
           </div>
-        </div>
-      ) : (
-        <div className="bg-bags/10 border border-bags/30 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Zap size={16} className="text-bags" />
-            <p className="text-sm font-bold text-bags">Launch a Creator Token on Bags</p>
+          <div>
+            <label htmlFor="bags-token-description" className="text-xs text-gray-400 mb-1.5 block font-medium">
+              Description
+            </label>
+            <input
+              id="bags-token-description"
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
+            />
           </div>
-          <p className="text-xs text-gray-400 mb-3">
-            Opens bags.fm in a new tab with your meme&apos;s image and details prefilled. You
-            connect and sign on Bags — MemeDay never holds your keys or signs anything here.
-          </p>
-
-          <div className="space-y-2 mb-3">
-            <div>
-              <label htmlFor="bags-token-name" className="text-xs text-gray-400 mb-1.5 block font-medium">
-                Token name
-              </label>
-              <input
-                id="bags-token-name"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value.slice(0, 32))}
-                placeholder="Token name"
-                maxLength={32}
-                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-              />
-            </div>
-            <div>
-              <label htmlFor="bags-token-ticker" className="text-xs text-gray-400 mb-1.5 block font-medium">
-                Ticker
-              </label>
-              <input
-                id="bags-token-ticker"
-                type="text"
-                value={ticker}
-                onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
-                placeholder="Ticker (2-10 chars, e.g. MLRD)"
-                maxLength={10}
-                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-              />
-            </div>
-            <div>
-              <label htmlFor="bags-token-description" className="text-xs text-gray-400 mb-1.5 block font-medium">
-                Description
-              </label>
-              <input
-                id="bags-token-description"
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optional)"
-                className="w-full bg-bg/80 border border-bags/30 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-bags placeholder:text-gray-600"
-              />
-            </div>
-          </div>
-
-          {/* Required disclosure, shown before the user can leave for bags.fm. The
-              partner cut comes off Bags' own platform fee, not the creator's —
-              see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
-          <p className="text-xs text-gray-500 mb-3">
-            MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
-            tokens launched through this link. This does not reduce your own creator fees.
-          </p>
-
-          <button
-            onClick={handleLaunch}
-            disabled={!ticker.trim() || !name.trim() || launching || verifying}
-            className="w-full py-2.5 rounded-xl font-bold text-white bg-bags hover:bg-bags-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-          >
-            {launching || verifying ? <Loader2 size={16} className="animate-spin" /> : <ExternalLink size={16} />}
-            Launch on Bags
-          </button>
         </div>
-      )}
 
-      {/* Claim-only mode always shows this panel (there is no launch step to
-          gate it behind); launch mode still gates it on having just opened
-          bags.fm (KAN-79). */}
-      {(claimOnly || awaitingMint) && (
+        {/* Required disclosure, shown before the user can leave for bags.fm. The
+            partner cut comes off Bags' own platform fee, not the creator's —
+            see lib/bags-server.ts isPartnerAttributed for how that's verified. */}
+        <p className="text-xs text-gray-500 mb-3">
+          MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
+          tokens launched through this link. This does not reduce your own creator fees.
+        </p>
+
+        <button
+          onClick={handleLaunch}
+          disabled={!ticker.trim() || !name.trim() || launching || verifying}
+          className="w-full py-2.5 rounded-xl font-bold text-white bg-bags hover:bg-bags-light disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+        >
+          {launching || verifying ? <Loader2 size={16} className="animate-spin" /> : <ExternalLink size={16} />}
+        Launch on Bags
+      </button>
+      </div>
+
+      {/* On the meme page this panel is always open: that is where a creator
+          comes back after bags.fm interrupted them, and the tab that opened
+          the launch is gone. On the success screen it waits until a launch
+          has actually been started here (KAN-79). */}
+      {(alwaysShowClaim || awaitingMint) && (
         <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
           <p className="text-sm font-semibold text-white mb-1">
-            {claimOnly ? "Claim your Bags token" : "Launched your token?"}
+            {awaitingMint ? "Launched your token?" : "Claim your Bags token"}
           </p>
           <p className="text-xs text-gray-400 mb-3">
             Paste the mint address Bags gave you so MemeDay can verify and show it on your

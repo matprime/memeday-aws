@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { ArrowUp, MessageCircle, ShoppingCart, ShoppingBag, Zap, Gift, Flag } from "lucide-react";
 import { DbMeme, Creator } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
@@ -10,6 +12,13 @@ import { TipModal } from "./TipModal";
 import { ShareBar } from "./ShareBar";
 import { EVENTS, track } from "@/lib/analytics";
 
+// Loaded on demand: minting pulls in umi and mpl-core, which is most of a
+// megabyte, and only an un-minted meme's own creator ever sees this button.
+const MintNftButton = dynamic(
+  () => import("./MintNftButton").then((m) => m.MintNftButton),
+  { ssr: false }
+);
+
 interface Props {
   meme: DbMeme;
   creator: Creator;
@@ -17,6 +26,7 @@ interface Props {
 }
 
 export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
+  const router = useRouter();
   const { cognitoToken, votedMemes, hydrateVotedMemes, voteOnMeme, reportOnMeme, addToast } =
     useAppStore();
   const [investOpen, setInvestOpen] = useState(false);
@@ -177,6 +187,24 @@ export function MemeActionBar({ meme, creator, commentCount = 0 }: Props) {
           <Zap size={16} />
           Trade creator token
         </button>
+
+        {/* Row 3: mint an un-minted meme. A mint that was cancelled at post
+            time leaves the meme up without its NFT, and this is the only way
+            back to it. creatorWalletAddr is only set for a verified wallet
+            (see lib/db.ts), and the server re-checks ownership regardless.
+            The wallet comparison itself lives inside MintNftButton: doing it
+            here unmounted the whole thing whenever the adapter dropped
+            publicKey on a declined prompt, losing the price mid-flow. */}
+        {!meme.nftMint && !!meme.creatorWalletAddr && (
+          <MintNftButton
+            memeId={meme.id}
+            imageUrl={meme.imageUrl}
+            caption={meme.caption}
+            defaultPrice={meme.listingPrice}
+            creatorWallet={meme.creatorWalletAddr}
+            onMinted={() => router.refresh()}
+          />
+        )}
       </div>
 
       {investOpen && (

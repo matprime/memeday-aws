@@ -179,7 +179,29 @@ test("bags/verify: a wallet-authenticated caller passes the gate and gets a simu
   const walletAddress = `TestVerifyWallet${Date.now()}`;
   const session = await createTestCognitoSession(`wallet_${walletAddress}`);
   const ip = `test-verify-wallet-ip-${Date.now()}`;
+  const { PutCommand } = require("@aws-sdk/lib-dynamodb");
+  const { randomUUID } = require("node:crypto");
+  const memeId = randomUUID();
   try {
+    // A token binds to a meme the caller uploaded (KAN-11), so the route
+    // resolves the meme row before it reaches the wallet-gated Bags call.
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: {
+          PK: `MEME#${memeId}`,
+          SK: `MEME#${memeId}`,
+          memeId,
+          creatorId: session.userId,
+          ownerId: session.userId,
+          s3Key: `test/${memeId}.jpg`,
+          caption: "Wallet gate test meme",
+          status: "active",
+          createdAt: new Date().toISOString(),
+        },
+      })
+    );
+
     const res = await POST(
       new Request("http://x/api/bags/verify", {
         method: "POST",
@@ -188,7 +210,7 @@ test("bags/verify: a wallet-authenticated caller passes the gate and gets a simu
           Authorization: `Bearer ${session.accessToken}`,
           "x-forwarded-for": ip,
         },
-        body: JSON.stringify({ name: "My Token", symbol: "MLRD" }),
+        body: JSON.stringify({ memeId, name: "My Token", symbol: "MLRD" }),
       })
     );
     assert.strictEqual(res.status, 200);
@@ -200,8 +222,11 @@ test("bags/verify: a wallet-authenticated caller passes the gate and gets a simu
     await dynamo.send(
       new DeleteCommand({
         TableName: TABLE,
-        Key: { PK: `USER#${session.userId}`, SK: "TOKEN#SIMULATED_MLRD" },
+        Key: { PK: `USER#${session.userId}`, SK: `TOKEN#${memeId}` },
       })
+    );
+    await dynamo.send(
+      new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` } })
     );
     await cleanupRateCounter(dynamo, TABLE, RATE_LIMITS, "bagsVerifyPerUser", session.userId);
     await cleanupRateCounter(dynamo, TABLE, RATE_LIMITS, "bagsVerifyPerIp", ip);

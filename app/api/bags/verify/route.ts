@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest, getWalletAddressFromRequest } from "@/lib/cognito";
-import { getVerifiedBagsToken, createVerifiedBagsToken, BagsTokenAlreadyBoundError } from "@/lib/db";
+import {
+  getMemeById,
+  getVerifiedBagsTokenForMeme,
+  getVerifiedBagsTokensByCreator,
+  createVerifiedBagsToken,
+  BagsTokenAlreadyBoundError,
+} from "@/lib/db";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyBagsLaunch, BagsVerifyError, type VerifyLaunchSuccess } from "@/lib/bags-server";
 
@@ -43,7 +49,24 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { tokenMint, name, symbol } = (body ?? {}) as Record<string, unknown>;
+  const { tokenMint, name, symbol, memeId } = (body ?? {}) as Record<string, unknown>;
+
+  // A token belongs to one meme, and only that meme's uploader may bind it
+  // (KAN-11). Checked against the meme row, not against anything the client
+  // claims, and before the Bags call so an impostor spends none of that budget.
+  if (typeof memeId !== "string" || !memeId) {
+    return NextResponse.json({ error: "memeId is required" }, { status: 400 });
+  }
+  const meme = await getMemeById(memeId);
+  if (!meme) {
+    return NextResponse.json({ error: "Meme not found" }, { status: 404 });
+  }
+  if (meme.creatorId !== userId) {
+    return NextResponse.json(
+      { error: "Only the creator of this meme can launch its token" },
+      { status: 403 }
+    );
+  }
 
   // name/symbol are what the creator entered when they opened the launch —
   // Bags itself doesn't return them from either GET below, so they are
@@ -76,19 +99,30 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  // One token per creator is a permanent, one-time binding (KAN-79). Checked
-  // here first so a double click or a retry on the same mint is a safe no-op
-  // (200, no write) instead of an error, and so a legacy TOKEN#<mint> row
-  // from before this change (no TOKEN#PRIMARY for the DB condition to catch)
-  // is still rejected. The DB condition in createVerifiedBagsToken stays too
+  // One token per meme is a permanent, one-time binding. Checked here first so
+  // a double click or a retry on the same mint is a safe no-op (200, no write)
+  // instead of an error. The DB condition in createVerifiedBagsToken stays too
   // — this pre-check alone is racy.
-  const existing = await getVerifiedBagsToken(userId);
+  const existing = await getVerifiedBagsTokenForMeme(userId, memeId);
   if (existing) {
     if (existing.tokenMint === result.tokenMint) {
       return NextResponse.json({ token: existing, simulated: result.simulated });
     }
     return NextResponse.json(
-      { error: "This account is already bound to a Bags token. The binding is permanent and cannot be changed." },
+      { error: "This meme is already bound to a Bags token. The binding is permanent and cannot be changed." },
+      { status: 409 }
+    );
+  }
+
+  // Per-meme binding would otherwise be free to defeat: pasting one mint on
+  // every meme would claim them all for the same token. A mint belongs to the
+  // first meme that claimed it.
+  const claimed = (await getVerifiedBagsTokensByCreator(userId)).find(
+    (t) => t.tokenMint === result.tokenMint
+  );
+  if (claimed) {
+    return NextResponse.json(
+      { error: "That token is already bound to another one of your memes." },
       { status: 409 }
     );
   }
@@ -97,6 +131,7 @@ export async function POST(req: Request) {
   try {
     token = await createVerifiedBagsToken({
       creatorId: userId,
+      memeId,
       tokenMint: result.tokenMint,
       symbol: symbol.trim(),
       name: name.trim(),

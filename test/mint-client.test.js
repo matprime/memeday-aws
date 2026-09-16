@@ -24,6 +24,9 @@ test("mint client: a declined signature is recognised in every shape a wallet re
   assert.equal(isUserRejection({ error: { code: 4001 } }), true);
   assert.equal(isUserRejection(new Error("User declined the transaction")), true);
   assert.equal(isUserRejection(new Error("Request rejected by user")), true);
+  // KAN-11: Phantom reports a closed popup this way, with no code and no
+  // "rejected" anywhere in it.
+  assert.equal(isUserRejection(new Error("Plugin Closed")), true);
 });
 
 test("mint client: a transport or program failure is never treated as a decline", async () => {
@@ -86,4 +89,14 @@ test("mint client: the on-chain name matches the server's truncation exactly", a
   // Truncation is by UTF-16 code unit on both sides, emoji included.
   const emoji = "😀".repeat(20);
   assert.equal(onChainName(emoji), emoji.slice(0, 32));
+});
+
+// KAN-11: a cancelled storage payment left the uploader returning nothing, and
+// the mint died on "Cannot read properties of undefined (reading 'startsWith')"
+// instead of naming the step.
+test("checkUri: a missing uri names the step rather than throwing a TypeError", async () => {
+  const { checkUri } = await load();
+
+  assert.throws(() => checkUri(undefined, "Image URI"), /Image URI is missing/);
+  assert.throws(() => checkUri("", "Image URI"), /Image URI is missing/);
 });
