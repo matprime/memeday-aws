@@ -6,7 +6,9 @@
 // correction 1). Do not recompute this condition anywhere else — the client
 // never derives it itself, it only reads the `live` field this module hands
 // back through GET /api/bags/launch-config and POST /api/bags/verify.
-import { SOLANA_ENABLED, SOLANA_NETWORK } from "./solana/network";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { SOLANA_ENABLED, SOLANA_NETWORK, SOLANA_RPC_URL } from "./solana/network";
+import { SOLANA_COMMITMENT } from "./nft-config";
 import { isPlausibleSolanaAddress } from "./bags";
 
 // mainnet-requires-VERCEL_ENV=production is already enforced inside
@@ -73,11 +75,9 @@ async function bagsGet(path: string): Promise<unknown> {
   }
 }
 
-// Every field but accountKeys is optional on purpose: this is a narrow view
-// of whatever Bags actually returns, not a claim that the full response looks
-// like this. accountKeys is nullable per KAN-73.
+// Every field is optional on purpose: this is a narrow view of whatever Bags
+// actually returns, not a claim that the full response looks like this.
 export interface BagsTokenLaunch {
-  accountKeys: string[] | null;
   status?: string;
   launchWallet?: string;
   creatorFeeBps?: number;
@@ -97,15 +97,10 @@ export interface BagsTokenCreator {
 function parseTokenLaunch(raw: unknown): BagsTokenLaunch {
   // Same envelope as getTokenCreators below: Bags wraps every response as
   // { success, response }, confirmed against the live API during the
-  // KAN-79 creator-mismatch investigation. Before this fix, every field
-  // below silently read as undefined off the wrong object, which made
-  // isPartnerAttributed always return false regardless of the real launch.
+  // KAN-79 creator-mismatch investigation. Before that fix, every field
+  // below silently read as undefined off the wrong object.
   const obj = ((raw as { response?: unknown })?.response ?? {}) as Record<string, unknown>;
-  const accountKeys = Array.isArray(obj.accountKeys)
-    ? obj.accountKeys.filter((k): k is string => typeof k === "string")
-    : null;
   return {
-    accountKeys,
     status: typeof obj.status === "string" ? obj.status : undefined,
     launchWallet: typeof obj.launchWallet === "string" ? obj.launchWallet : undefined,
     creatorFeeBps: typeof obj.creatorFeeBps === "number" ? obj.creatorFeeBps : undefined,
@@ -140,12 +135,74 @@ export async function getTokenCreators(tokenMint: string): Promise<BagsTokenCrea
   return Array.isArray(list) ? list.map(parseTokenCreator) : [];
 }
 
-// Attribution check per KAN-73: the partner wallet address itself shows up in
-// accountKeys when a launch carries our partner pair. The Partner Config PDA
-// never appears there, so it is deliberately not part of this check.
-export function isPartnerAttributed(launch: BagsTokenLaunch): boolean {
-  const { partnerWallet } = getBagsSecrets();
-  return launch.accountKeys?.includes(partnerWallet) ?? false;
+export type PartnerAttribution = "attributed" | "not_attributed" | "unknown";
+
+// KAN-29 follow-up: the launch transaction's accountKeys is not a valid
+// attribution signal (that's what KAN-73 got wrong — the only reason it ever
+// read true is that its one test launch was made from the partner wallet
+// itself, which put it in accountKeys as the creator; every real creator
+// launch reads false regardless of the truth). Bags stores the partner in a
+// separate on-chain account, FeeShareConfig (fee-share-v2 program), created
+// in its own transaction before the launch and never referenced by it. This
+// reads that account directly instead.
+const FEE_SHARE_V2_PROGRAM_ID = "FEE2tBhCKAt7shrod19QttSVREUYPiyMzoku1mL1gqVK";
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+
+// The discriminator Anchor put on the deployed accounts (FeeShareConfigHeader),
+// plus the one Anchor derives for the full struct name (FeeShareConfig).
+// Anything else is not this account type.
+const FEE_SHARE_CONFIG_DISCRIMINATORS = [
+  [40, 71, 136, 156, 222, 49, 31, 201],
+  [240, 232, 7, 22, 50, 198, 71, 210],
+];
+
+function matchesFeeShareConfigDiscriminator(data: Buffer): boolean {
+  return FEE_SHARE_CONFIG_DISCRIMINATORS.some((disc) =>
+    disc.every((byte, i) => data[i] === byte)
+  );
+}
+
+// Reads the FeeShareConfig PDA for a launch and checks whether it names our
+// partner pair. Never throws: a Solana RPC hiccup here must not block a
+// creator binding their own token, so every failure mode (account missing,
+// wrong owner or discriminator, RPC error, timeout) collapses to "unknown"
+// rather than surfacing as a 502.
+export async function getPartnerAttribution(tokenMint: string): Promise<PartnerAttribution> {
+  const { partnerWallet, partnerConfig } = getBagsSecrets();
+  const programId = new PublicKey(FEE_SHARE_V2_PROGRAM_ID);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const [pda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("fee_share_config"),
+        new PublicKey(tokenMint).toBuffer(),
+        new PublicKey(WRAPPED_SOL_MINT).toBuffer(),
+      ],
+      programId
+    );
+
+    const connection = new Connection(SOLANA_RPC_URL, SOLANA_COMMITMENT);
+    const account = await Promise.race([
+      connection.getAccountInfo(pda),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("FeeShareConfig read timed out")), REQUEST_TIMEOUT_MS);
+      }),
+    ]);
+
+    if (!account) return "unknown";
+    if (!account.owner.equals(programId)) return "unknown";
+    if (!matchesFeeShareConfigDiscriminator(account.data)) return "unknown";
+
+    const partner = new PublicKey(account.data.subarray(72, 104)).toBase58();
+    const partnerConfigOnChain = new PublicKey(account.data.subarray(104, 136)).toBase58();
+    return partner === partnerWallet && partnerConfigOnChain === partnerConfig
+      ? "attributed"
+      : "not_attributed";
+  } catch {
+    return "unknown";
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Exact match on purpose: Solana addresses are base58 and case-sensitive, so
@@ -164,7 +221,7 @@ export interface VerifyLaunchInput {
 export interface VerifyLaunchSuccess {
   simulated: boolean;
   tokenMint: string;
-  partnerAttributed: boolean;
+  partnerAttribution: PartnerAttribution;
 }
 
 // Thrown instead of returning a { ok: false, ... } union member: this
@@ -190,7 +247,7 @@ export async function verifyBagsLaunch(input: VerifyLaunchInput): Promise<Verify
     return {
       simulated: true,
       tokenMint: `SIMULATED_${input.symbol}`,
-      partnerAttributed: true,
+      partnerAttribution: "attributed",
     };
   }
 
@@ -216,19 +273,13 @@ export async function verifyBagsLaunch(input: VerifyLaunchInput): Promise<Verify
     throw new BagsVerifyError(403, "This wallet is not recorded as the creator of this token on Bags");
   }
 
-  let launch: BagsTokenLaunch;
-  try {
-    launch = await getTokenLaunch(input.tokenMint);
-  } catch {
-    throw new BagsVerifyError(502, "Failed to reach Bags");
-  }
-
-  // A launch not attributed to our partner link is not an error the user
-  // caused — the route still stores it, just flagged, so we can see how
-  // often creators bypass our link.
+  // A launch not attributed to our partner link (or one we couldn't read the
+  // on-chain state for) is not an error the user caused — the route still
+  // stores it, just flagged, so we can see how often creators bypass our
+  // link or hit an RPC hiccup.
   return {
     simulated: false,
     tokenMint: input.tokenMint,
-    partnerAttributed: isPartnerAttributed(launch),
+    partnerAttribution: await getPartnerAttribution(input.tokenMint),
   };
 }

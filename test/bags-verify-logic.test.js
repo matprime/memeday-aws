@@ -9,8 +9,11 @@ const { pathToFileURL, fileURLToPath } = require("node:url");
 // happens to be in .env locally. Set before the .env loader below so its
 // "only set if undefined" guard leaves these alone.
 process.env.BAGS_API_KEY = "test-api-key";
-process.env.BAGS_PARTNER_WALLET = "PARTNERWALLET11111111111111111111111111111";
-process.env.BAGS_PARTNER_CONFIG = "PARTNERCONFIG1111111111111111111111111111";
+// Real, decodable (but obviously fake) 32-byte pubkeys — the account read
+// below round-trips these through PublicKey, unlike the old accountKeys
+// string-equality check, so they must actually decode.
+process.env.BAGS_PARTNER_WALLET = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
+process.env.BAGS_PARTNER_CONFIG = "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3";
 
 // lib/bags-server.ts now imports lib/solana/network.ts (for the live/mock
 // gate, KAN-29 follow-up correction 1), which validates SOLANA_NETWORK/
@@ -53,29 +56,120 @@ test("isBagsLiveModeEnabled: false under this test env's devnet config", async (
   assert.strictEqual(isBagsLiveModeEnabled(), false);
 });
 
-// ── isPartnerAttributed: accountKeys check ──────────────────────────────────
+// ── getPartnerAttribution: on-chain FeeShareConfig read ─────────────────────
 
-test("isPartnerAttributed: true when accountKeys contains our partner wallet", async () => {
-  const { isPartnerAttributed } = await load();
-  assert.strictEqual(
-    isPartnerAttributed({ accountKeys: ["someOtherKey", process.env.BAGS_PARTNER_WALLET] }),
-    true
+const { Connection, PublicKey } = require("@solana/web3.js");
+
+const FEE_SHARE_V2_PROGRAM_ID = "FEE2tBhCKAt7shrod19QttSVREUYPiyMzoku1mL1gqVK";
+const MATCHING_DISCRIMINATOR = [40, 71, 136, 156, 222, 49, 31, 201];
+const WRONG_DISCRIMINATOR = [1, 2, 3, 4, 5, 6, 7, 8];
+
+// Builds a FeeShareConfig account's raw bytes from the layout in the ticket:
+// discriminator(8) base_mint(32) quote_mint(32) partner(32) partner_config(32).
+// Exercises the byte offsets the implementation reads, not just the branch.
+function buildFeeShareConfigData({ discriminator, partner, partnerConfig }) {
+  const data = Buffer.alloc(136);
+  Buffer.from(discriminator).copy(data, 0);
+  new PublicKey(partner).toBuffer().copy(data, 72);
+  new PublicKey(partnerConfig).toBuffer().copy(data, 104);
+  return data;
+}
+
+function withMockedAccountInfo(getAccountInfoImpl, fn) {
+  const original = Connection.prototype.getAccountInfo;
+  Connection.prototype.getAccountInfo = getAccountInfoImpl;
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      Connection.prototype.getAccountInfo = original;
+    });
+}
+
+test("getPartnerAttribution: attributed when owner, discriminator and both keys match", async () => {
+  const { getPartnerAttribution } = await load();
+  await withMockedAccountInfo(
+    async () => ({
+      owner: new PublicKey(FEE_SHARE_V2_PROGRAM_ID),
+      data: buildFeeShareConfigData({
+        discriminator: MATCHING_DISCRIMINATOR,
+        partner: process.env.BAGS_PARTNER_WALLET,
+        partnerConfig: process.env.BAGS_PARTNER_CONFIG,
+      }),
+      lamports: 1,
+      executable: false,
+      rentEpoch: 0,
+    }),
+    async () => {
+      const result = await getPartnerAttribution("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+      assert.strictEqual(result, "attributed");
+    }
   );
 });
 
-test("isPartnerAttributed: false when accountKeys is null", async () => {
-  const { isPartnerAttributed } = await load();
-  assert.strictEqual(isPartnerAttributed({ accountKeys: null }), false);
+test("getPartnerAttribution: not_attributed when the account is valid but names a different partner", async () => {
+  const { getPartnerAttribution } = await load();
+  await withMockedAccountInfo(
+    async () => ({
+      owner: new PublicKey(FEE_SHARE_V2_PROGRAM_ID),
+      data: buildFeeShareConfigData({
+        discriminator: MATCHING_DISCRIMINATOR,
+        partner: "4Ss5JMkXAD9Z7cktFEdrqeMuT6jGMF1pVozTyPHZ6zT4",
+        partnerConfig: process.env.BAGS_PARTNER_CONFIG,
+      }),
+      lamports: 1,
+      executable: false,
+      rentEpoch: 0,
+    }),
+    async () => {
+      const result = await getPartnerAttribution("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+      assert.strictEqual(result, "not_attributed");
+    }
+  );
 });
 
-test("isPartnerAttributed: false when accountKeys is present but does not contain our wallet", async () => {
-  const { isPartnerAttributed } = await load();
-  assert.strictEqual(isPartnerAttributed({ accountKeys: ["someOtherKey", "anotherKey"] }), false);
+test("getPartnerAttribution: unknown when the account does not exist", async () => {
+  const { getPartnerAttribution } = await load();
+  await withMockedAccountInfo(
+    async () => null,
+    async () => {
+      const result = await getPartnerAttribution("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+      assert.strictEqual(result, "unknown");
+    }
+  );
 });
 
-test("isPartnerAttributed: false on an empty accountKeys array", async () => {
-  const { isPartnerAttributed } = await load();
-  assert.strictEqual(isPartnerAttributed({ accountKeys: [] }), false);
+test("getPartnerAttribution: unknown on a wrong discriminator", async () => {
+  const { getPartnerAttribution } = await load();
+  await withMockedAccountInfo(
+    async () => ({
+      owner: new PublicKey(FEE_SHARE_V2_PROGRAM_ID),
+      data: buildFeeShareConfigData({
+        discriminator: WRONG_DISCRIMINATOR,
+        partner: process.env.BAGS_PARTNER_WALLET,
+        partnerConfig: process.env.BAGS_PARTNER_CONFIG,
+      }),
+      lamports: 1,
+      executable: false,
+      rentEpoch: 0,
+    }),
+    async () => {
+      const result = await getPartnerAttribution("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+      assert.strictEqual(result, "unknown");
+    }
+  );
+});
+
+test("getPartnerAttribution: unknown when the RPC call throws", async () => {
+  const { getPartnerAttribution } = await load();
+  await withMockedAccountInfo(
+    async () => {
+      throw new Error("RPC unavailable");
+    },
+    async () => {
+      const result = await getPartnerAttribution("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+      assert.strictEqual(result, "unknown");
+    }
+  );
 });
 
 // ── isCallerVerifiedCreator: creator/v3 match ───────────────────────────────
@@ -136,13 +230,12 @@ test("getTokenLaunch: sends the x-api-key header and parses a full response", as
     {
       body: {
         success: true,
-        response: { accountKeys: ["a", "b"], status: "live", launchWallet: "w", creatorFeeBps: 10000, dbcConfigKey: "c", dbcPoolKey: "p" },
+        response: { status: "live", launchWallet: "w", creatorFeeBps: 10000, dbcConfigKey: "c", dbcPoolKey: "p" },
       },
     },
     async (getCapture) => {
       const launch = await getTokenLaunch("BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
       assert.deepStrictEqual(launch, {
-        accountKeys: ["a", "b"],
         status: "live",
         launchWallet: "w",
         creatorFeeBps: 10000,
@@ -156,17 +249,9 @@ test("getTokenLaunch: sends the x-api-key header and parses a full response", as
   );
 });
 
-test("getTokenLaunch: treats a null accountKeys as null, not an empty array", async () => {
-  const { getTokenLaunch } = await load();
-  await withMockedFetch({ body: { success: true, response: { accountKeys: null } } }, async () => {
-    const launch = await getTokenLaunch("mint");
-    assert.strictEqual(launch.accountKeys, null);
-  });
-});
-
 test("getTokenLaunch: missing optional fields come back undefined, not thrown", async () => {
   const { getTokenLaunch } = await load();
-  await withMockedFetch({ body: { success: true, response: { accountKeys: [] } } }, async () => {
+  await withMockedFetch({ body: { success: true, response: {} } }, async () => {
     const launch = await getTokenLaunch("mint");
     assert.strictEqual(launch.status, undefined);
     assert.strictEqual(launch.launchWallet, undefined);
@@ -221,7 +306,7 @@ test("verifyBagsLaunch: simulated result when the live gate is false, no fetch t
   try {
     const result = await verifyBagsLaunch({ callerWallet: undefined, tokenMint: undefined, name: "My Token", symbol: "MLRD" });
     assert.strictEqual(result.simulated, true);
-    assert.strictEqual(result.partnerAttributed, true);
+    assert.strictEqual(result.partnerAttribution, "attributed");
     assert.match(result.tokenMint, /^SIMULATED_MLRD$/);
     assert.strictEqual(calls, 0, "no network call should be made in mock mode");
   } finally {

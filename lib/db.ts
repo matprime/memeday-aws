@@ -21,6 +21,7 @@ import type {
   OpenReport,
 } from "./types";
 import { NFT_ORPHANED_UPLOAD_RETENTION_SECONDS } from "./nft-config";
+import type { PartnerAttribution } from "./bags-server";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -84,7 +85,12 @@ function parseBagsToken(item: Record<string, unknown>): DbBagsToken {
     tokenMint: item.tokenMint as string,
     symbol: item.symbol as string,
     name: item.name as string,
-    partnerAttributed: (item.partnerAttributed as boolean) ?? false,
+    // Legacy rows only have the old boolean: it was the invalid accountKeys
+    // check's output, so `true` was at least attributed while `false` proved
+    // nothing and maps to "unknown", not "not_attributed".
+    partnerAttribution:
+      (item.partnerAttribution as PartnerAttribution | undefined) ??
+      (item.partnerAttributed ? "attributed" : "unknown"),
     verifiedAt: item.verifiedAt as string,
   };
 }
@@ -809,7 +815,7 @@ export async function createVerifiedBagsToken(token: {
   tokenMint: string;
   symbol: string;
   name: string;
-  partnerAttributed: boolean;
+  partnerAttribution: PartnerAttribution;
 }): Promise<DbBagsToken> {
   const item: Record<string, unknown> = {
     PK: `USER#${token.creatorId}`,
@@ -819,7 +825,7 @@ export async function createVerifiedBagsToken(token: {
     tokenMint: token.tokenMint,
     symbol: token.symbol,
     name: token.name,
-    partnerAttributed: token.partnerAttributed,
+    partnerAttribution: token.partnerAttribution,
     verifiedAt: new Date().toISOString(),
   };
   try {

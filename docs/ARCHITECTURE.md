@@ -175,11 +175,17 @@ touched by TTL.
   call site. Live: MemeDay builds a Launch Intent URL (`lib/bags.ts`, pure,
   no secrets) carrying our partner wallet + Partner Config PDA and opens it
   in a new tab; the creator connects and signs on bags.fm itself. MemeDay
-  signs nothing and calls no on-chain RPC for this. `POST /api/bags/verify`
-  then reads Bags' `token-launch` and `token-launch/creator/v3` HTTP
-  endpoints (not on-chain RPC, `x-api-key`, server-only) to confirm
-  creatorship and whether the launch carries our partner wallet in
-  `accountKeys`, then stores the result (see TOKEN# below). Off mainnet
+  signs nothing and calls no on-chain RPC for creatorship. `POST
+  /api/bags/verify` reads Bags' `token-launch/creator/v3` HTTP endpoint
+  (`x-api-key`, server-only) to confirm creatorship, then reads the launch's
+  on-chain `FeeShareConfig` account (fee-share-v2 program
+  `FEE2tBhCKAt7shrod19QttSVREUYPiyMzoku1mL1gqVK`, PDA seeded on
+  `["fee_share_config", base_mint, quote_mint]`) via `Connection.getAccountInfo`
+  to confirm attribution — this is a read, no SOL spent. The launch
+  transaction's `accountKeys` (Bags' `token-launch` HTTP endpoint) is not a
+  valid attribution signal: KAN-73's check on it always read false for a real
+  creator launch, since Bags stores the partner in `FeeShareConfig`, created
+  in its own transaction before the launch, never referenced by it. Off mainnet
   (Preview, local, CI): no bags.fm tab opens and no call reaches
   `public-api-v2.bags.fm` — the launch button runs a labeled simulated path
   straight to a stored, obviously-fake `SIMULATED_<symbol>` token, so the
@@ -239,7 +245,7 @@ and likes) retrievable in a single query.
 | Like | `MEME#<memeId>` | `LIKE#<userId>` | `createdAt` (one item per user = dedupe) |
 | PendingUpload | `PENDING#<pendingId>` | `PENDING#<pendingId>` | `pendingId`, `creatorId`, `s3Key`, `caption`, `status`, `reason?`, `createdAt`, `expiresAt` (TTL, 24h) |
 | NftMetadata | `NFTMETA#<id>` | `NFTMETA#<id>` | `nftMetaId`, `name`, `image_url`, `description`, `createdAt` |
-| BagsToken (KAN-29) | `USER#<creatorId>` | `TOKEN#<tokenMint>` | `creatorId`, `tokenMint`, `symbol`\*\*, `name`\*\*, `partnerAttributed`, `verifiedAt`. Shares the User item's PK by design |
+| BagsToken (KAN-29) | `USER#<creatorId>` | `TOKEN#<memeId>` | `memeId`, `tokenMint`, `symbol`\*\*, `name`\*\*, `partnerAttribution`, `verifiedAt`. Shares the User item's PK by design. Legacy rows exist at SK `TOKEN#PRIMARY` and `TOKEN#<mint>` with a boolean `partnerAttributed`; read back with `memeId` `""` and still shown on the profile |
 | RateLimit counter | `RATE#<identity>` | `<limitKey>#<windowStart>` | `requestCount`, `expiresAt` (TTL, window + 60s) |
 | Feed item | `FEED#GLOBAL` | `<score padded to 15 digits>#<memeId>` | snapshot: `memeId`, `creatorId`, `s3Key`, `caption`, `score`, plus `GSI3PK`/`GSI3SK`. Written only by StreamHandler |
 | Leaderboard | `LEADERBOARD#GLOBAL` | `USER#<creatorId>` | `creatorId`, `memeCount`, incremented/decremented by StreamHandler |
@@ -248,7 +254,7 @@ and likes) retrievable in a single query.
 `creatorId`; nothing changes it yet (see NFT resale below).  \*\* `symbol`/
 `name` on BagsToken are as supplied by the creator when they claim the
 launch, not independently verified against Bags — neither of Bags' two GET
-endpoints returns a token name or symbol. `tokenMint` and `partnerAttributed`
+endpoints returns a token name or symbol. `tokenMint` and `partnerAttribution`
 are the verified fields.
 
 Meme `status` values in code: `active`, `listed` (set when `listingPrice` is

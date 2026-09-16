@@ -14,8 +14,11 @@ process.env.SOLANA_ENABLED = "true";
 process.env.VERCEL_ENV = "production";
 process.env.SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 process.env.BAGS_API_KEY = "test-live-api-key";
-process.env.BAGS_PARTNER_WALLET = "PARTNERWALLET11111111111111111111111111111";
-process.env.BAGS_PARTNER_CONFIG = "PARTNERCONFIG1111111111111111111111111111";
+// Real, decodable (but obviously fake) 32-byte pubkeys — the account read
+// below round-trips these through PublicKey, unlike the old accountKeys
+// string-equality check, so they must actually decode.
+process.env.BAGS_PARTNER_WALLET = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
+process.env.BAGS_PARTNER_CONFIG = "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -33,12 +36,38 @@ function load() {
   return import(pathToFileURL(path.join(__dirname, "..", "lib", "bags-server.ts")).href);
 }
 
+const { Connection, PublicKey } = require("@solana/web3.js");
+const FEE_SHARE_V2_PROGRAM_ID = "FEE2tBhCKAt7shrod19QttSVREUYPiyMzoku1mL1gqVK";
+const FEE_SHARE_CONFIG_DISCRIMINATOR = [40, 71, 136, 156, 222, 49, 31, 201];
+
+// Builds a FeeShareConfig account's raw bytes: discriminator(8) base_mint(32)
+// quote_mint(32) partner(32) partner_config(32). getPartnerAttribution reads
+// this over RPC (Connection.getAccountInfo), not over the Bags HTTP API, so
+// it's mocked at that layer rather than through global.fetch.
+function buildFeeShareConfigData(partner, partnerConfig) {
+  const data = Buffer.alloc(136);
+  Buffer.from(FEE_SHARE_CONFIG_DISCRIMINATOR).copy(data, 0);
+  new PublicKey(partner).toBuffer().copy(data, 72);
+  new PublicKey(partnerConfig).toBuffer().copy(data, 104);
+  return data;
+}
+
+function withMockedAccountInfo(getAccountInfoImpl, fn) {
+  const original = Connection.prototype.getAccountInfo;
+  Connection.prototype.getAccountInfo = getAccountInfoImpl;
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      Connection.prototype.getAccountInfo = original;
+    });
+}
+
 test("isBagsLiveModeEnabled: true on mainnet + SOLANA_ENABLED=true", async () => {
   const { isBagsLiveModeEnabled } = await load();
   assert.strictEqual(isBagsLiveModeEnabled(), true);
 });
 
-test("verifyBagsLaunch: live gate true calls the real client (fetch mocked, no live network call)", async () => {
+test("verifyBagsLaunch: live gate true calls the real client (fetch and on-chain read both mocked, no live network call)", async () => {
   const { verifyBagsLaunch } = await load();
   const originalFetch = global.fetch;
   let calls = 0;
@@ -56,23 +85,30 @@ test("verifyBagsLaunch: live gate true calls the real client (fetch mocked, no l
         }),
       };
     }
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, response: { accountKeys: ["a", process.env.BAGS_PARTNER_WALLET] } }),
-    };
+    throw new Error(`unexpected fetch to ${url}: attribution is read on-chain, not via HTTP`);
   };
   try {
-    const result = await verifyBagsLaunch({
-      callerWallet: "CallerWallet1111111111111111111111111111",
-      tokenMint: "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS",
-      name: "My Token",
-      symbol: "MLRD",
-    });
-    assert.strictEqual(result.simulated, false);
-    assert.strictEqual(result.partnerAttributed, true);
-    assert.strictEqual(result.tokenMint, "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
-    assert.strictEqual(calls, 2, "expected one call each to creator/v3 and token-launch");
+    await withMockedAccountInfo(
+      async () => ({
+        owner: new PublicKey(FEE_SHARE_V2_PROGRAM_ID),
+        data: buildFeeShareConfigData(process.env.BAGS_PARTNER_WALLET, process.env.BAGS_PARTNER_CONFIG),
+        lamports: 1,
+        executable: false,
+        rentEpoch: 0,
+      }),
+      async () => {
+        const result = await verifyBagsLaunch({
+          callerWallet: "CallerWallet1111111111111111111111111111",
+          tokenMint: "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS",
+          name: "My Token",
+          symbol: "MLRD",
+        });
+        assert.strictEqual(result.simulated, false);
+        assert.strictEqual(result.partnerAttribution, "attributed");
+        assert.strictEqual(result.tokenMint, "BmAGtXaTo5svvDLHLDJHpFJhhPuAbmNvBg1yFh7JBAGS");
+        assert.strictEqual(calls, 1, "expected exactly one HTTP call, to creator/v3");
+      }
+    );
   } finally {
     global.fetch = originalFetch;
   }
@@ -148,11 +184,7 @@ test("verifyBagsLaunch: an unwrapped (legacy-shaped) creators response still rej
         json: async () => [{ wallet: "CallerWallet1111111111111111111111111111", isCreator: true }],
       };
     }
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, response: { accountKeys: ["a", process.env.BAGS_PARTNER_WALLET] } }),
-    };
+    throw new Error(`unexpected fetch to ${url}: the creator mismatch must reject before attribution is read`);
   };
   try {
     await assert.rejects(
