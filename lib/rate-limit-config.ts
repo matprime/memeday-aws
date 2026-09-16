@@ -53,6 +53,9 @@ export const RATE_LIMITS = {
   // POST /api/nft-metadata was unauthenticated and unlimited: anyone could
   // write rows into the table indefinitely.
   nftMetadataPerUser: { key: "nftMetadataPerUser", max: 50, windowSeconds: DAY },
+  // Pricing a minted NFT. One write per call and only ever to the caller's own
+  // meme, so this is a ceiling on repricing rather than a real abuse surface.
+  listingPerUser: { key: "listingPerUser", max: 100, windowSeconds: DAY },
 
   // ── Content report (KAN-43) ─────────────────────────────────────────────
   // Unauthenticated route, so the per-IP ceiling is the only layer that

@@ -273,11 +273,28 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
     // The image is read from CloudFront while the status round-trip is in
     // flight: it is the largest download in the flow and does not depend on it.
     const picture = storageProvider === "irys" ? fetchPicture(imageUrl) : null;
-    await advance("UPLOADING_PICTURE");
+    // Only when the request is not already here. An attempt that recorded
+    // nothing — a declined Arweave top-up, an upload that died — leaves the
+    // status at UPLOADING_PICTURE, and asking for it again is refused as an
+    // illegal transition, which stranded the meme un-mintable for good
+    // (KAN-11). Re-entering is deliberately NOT made legal server-side: that
+    // is the same guard stopping two tabs from both paying to upload.
+    if (state.status !== "UPLOADING_PICTURE") await advance("UPLOADING_PICTURE");
     // Whatever the caller started earlier has to be done before the upload,
     // and its failures belong to the user here rather than to an unhandled
     // rejection somewhere behind the modal.
-    if (params.storageReady) await params.storageReady;
+    if (params.storageReady) {
+      try {
+        await params.storageReady;
+      } catch (err) {
+        // The Arweave top-up is a wallet prompt like any other, and declining
+        // it is the same user decision as declining the mint. Saying so beats
+        // surfacing whatever the wallet called it, and the request stays at
+        // UPLOADING_PICTURE, which a retry may re-enter.
+        if (isUserRejection(err)) throw new MintSignatureRejectedError();
+        throw err;
+      }
+    }
     const pictureUri = picture
       ? (await umi.uploader.upload([await picture]))[0]
       : imageUrl;

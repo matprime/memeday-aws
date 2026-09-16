@@ -16,7 +16,14 @@ export function onChainName(caption: string): string {
 
 // Checked here before the transaction is built as well as server-side before
 // the uri is recorded, so an unusable uri cannot reach the chain.
-export function checkUri(uri: string, label: string): string {
+export function checkUri(uri: unknown, label: string): string {
+  // Typed unknown rather than string because the callers feed it a value from
+  // outside: an uploader that returns nothing for a cancelled payment handed
+  // this `undefined`, and the mint died on "Cannot read properties of
+  // undefined" instead of naming the step that failed.
+  if (typeof uri !== "string" || !uri) {
+    throw new Error(`${label} is missing — the upload did not return one`);
+  }
   if (!uri.startsWith("https://")) {
     throw new Error(`${label} must be an https URI`);
   }
@@ -53,5 +60,10 @@ export function isUserRejection(err: unknown): boolean {
   };
   if (e.name === "WalletSignTransactionError") return true;
   if (e.code === 4001 || e.error?.code === 4001) return true;
-  return /user (rejected|declined)|request rejected/i.test(e.message ?? "");
+  // Closing the wallet popup is a decline that never says so: Phantom reports
+  // it as "Plugin Closed" with no code. Left unmatched, the request was never
+  // parked as retryable and the user could not mint that meme again.
+  return /user (rejected|declined)|request rejected|plugin closed|user closed|popup closed/i.test(
+    e.message ?? ""
+  );
 }

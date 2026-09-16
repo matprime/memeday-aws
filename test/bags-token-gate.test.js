@@ -8,9 +8,11 @@ const { pathToFileURL, fileURLToPath } = require("node:url");
 // This repo has no component-render tests (see the "kill switch" tests in
 // solana-network.test.js) — component behavior is verified at the data layer
 // it reads, with a comment naming the component. Same approach here for the
-// KAN-29 follow-up's "one token per user, UI only" rule: BagsLaunchClaim.tsx
-// and app/creator/[id]/page.tsx both branch on getVerifiedBagsToken — a
-// token means render BagsTokenCard, no token means render the launch button.
+// getVerifiedBagsToken, which answers "which token represents this creator"
+// for app/creator/[id]/page.tsx — a token means render BagsTokenCard, no token
+// means render nothing. Since KAN-11 a token belongs to a meme rather than to
+// the creator, so a creator may hold several and this picks the latest; the
+// per-meme question BagsLaunchClaim.tsx asks is getVerifiedBagsTokenForMeme.
 //
 // DynamoDB client mocked per this ticket's Tests section, not a real table.
 // lib/dynamo.ts still requires DYNAMODB_TABLE_NAME to exist at import time

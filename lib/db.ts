@@ -77,6 +77,10 @@ function parseComment(item: Record<string, unknown>): DbComment {
 function parseBagsToken(item: Record<string, unknown>): DbBagsToken {
   return {
     creatorId: item.creatorId as string,
+    // Rows written before per-meme binding have no memeId and a TOKEN#PRIMARY
+    // key. They still read back, and still represent the creator, but no meme
+    // claims them — so a creator carrying one can still launch from a new meme.
+    memeId: (item.memeId as string) ?? "",
     tokenMint: item.tokenMint as string,
     symbol: item.symbol as string,
     name: item.name as string,
@@ -790,15 +794,18 @@ export async function dismissReport(memeId: string): Promise<void> {
   );
 }
 
-// SK is the constant TOKEN#PRIMARY rather than TOKEN#<tokenMint> (KAN-79):
-// tokenMint lives only in the tokenMint attribute, never in the key, so a
-// creator has at most one item this function can ever write, and the
-// ConditionExpression below makes the first write of it a one-time binding —
-// no TransactWriteItems, no second source of truth on the USER# item.
+// SK is TOKEN#<memeId> rather than TOKEN#<tokenMint>: tokenMint lives only in
+// the tokenMint attribute, never in the key, so one meme has at most one item
+// this function can ever write and the ConditionExpression below makes the
+// first write of it a one-time binding — no TransactWriteItems, no second
+// source of truth on the USER# item. It was the constant TOKEN#PRIMARY until
+// KAN-11: a token bound to the creator followed them onto every later meme's
+// success screen, so a second meme could never launch one of its own.
 export class BagsTokenAlreadyBoundError extends Error {}
 
 export async function createVerifiedBagsToken(token: {
   creatorId: string;
+  memeId: string;
   tokenMint: string;
   symbol: string;
   name: string;
@@ -806,8 +813,9 @@ export async function createVerifiedBagsToken(token: {
 }): Promise<DbBagsToken> {
   const item: Record<string, unknown> = {
     PK: `USER#${token.creatorId}`,
-    SK: "TOKEN#PRIMARY",
+    SK: `TOKEN#${token.memeId}`,
     creatorId: token.creatorId,
+    memeId: token.memeId,
     tokenMint: token.tokenMint,
     symbol: token.symbol,
     name: token.name,
@@ -824,11 +832,29 @@ export async function createVerifiedBagsToken(token: {
     );
   } catch (err) {
     if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
-      throw new BagsTokenAlreadyBoundError("This account is already bound to a Bags token");
+      throw new BagsTokenAlreadyBoundError("This meme is already bound to a Bags token");
     }
     throw err;
   }
   return parseBagsToken(item);
+}
+
+// The binding for one meme. A direct key read: the profile's "which token is
+// this creator's" question is a different one, answered by
+// getVerifiedBagsToken below.
+export async function getVerifiedBagsTokenForMeme(
+  creatorId: string,
+  memeId: string
+): Promise<DbBagsToken | null> {
+  noStore();
+  const result = await dynamo.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `USER#${creatorId}`, SK: `TOKEN#${memeId}` },
+    })
+  );
+  if (!result.Item) return null;
+  return parseBagsToken(result.Item as Record<string, unknown>);
 }
 
 // Shares the User row's PK by design (see DbBagsToken) — this Query only ever
@@ -845,10 +871,8 @@ export async function getVerifiedBagsTokensByCreator(creatorId: string): Promise
   return (result.Items ?? []).map((item) => parseBagsToken(item as Record<string, unknown>));
 }
 
-// Single "does this creator have a token" read, shared by the profile page
-// and the claim UI's launch-button-vs-card decision (KAN-29 follow-up), so
-// both always agree on which one counts when a creator has claimed more than
-// one launch: the most recently verified.
+// Which token represents the creator. Tokens are bound per meme (KAN-11), so a
+// creator can hold several; the profile shows the most recently verified.
 export async function getVerifiedBagsToken(creatorId: string): Promise<DbBagsToken | null> {
   const tokens = await getVerifiedBagsTokensByCreator(creatorId);
   if (tokens.length === 0) return null;
@@ -1103,6 +1127,32 @@ export async function setMemeNftMint(memeId: string, nftMint: string): Promise<b
         UpdateExpression: "SET nftMint = :mint",
         ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(nftMint)",
         ExpressionAttributeValues: { ":mint": nftMint },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+// A price is only meaningful once the NFT exists, so the condition requires
+// the mint address rather than trusting the caller's ordering. status follows
+// the price the same way createMeme derives it, which is what MemeCard's Buy
+// button reads. Returns false rather than throwing when the meme is gone or
+// unminted — that is a stale client, not a server fault.
+export async function setMemeListingPrice(memeId: string, price: number): Promise<boolean> {
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+        UpdateExpression: "SET listingPrice = :price, #s = :listed",
+        ConditionExpression: "attribute_exists(PK) AND attribute_exists(nftMint)",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":price": price, ":listed": "listed" },
       })
     );
     return true;
