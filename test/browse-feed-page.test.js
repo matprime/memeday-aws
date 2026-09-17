@@ -234,17 +234,33 @@ test("getFeedPage: pagination returns correct order, no duplicates, and null nex
 test("getFeedPage: a tampered cursor (garbage base64 or wrong GSI3PK) falls back to page 1", async (t) => {
   if (skipIfNoCredentials(t)) return;
   const { getFeedPage } = await load("lib/db.ts");
+  const { dynamo, TABLE } = await load("lib/dynamo.ts");
 
-  const page1 = await getFeedPage("week");
-  const garbage = await getFeedPage("week", "not-valid-base64url!!!");
-  const wrongPk = await getFeedPage(
-    "week",
-    Buffer.from(JSON.stringify({ GSI3PK: "NOT#FEED", GSI3SK: "2020-01-01T00:00:00.000Z" }), "utf8").toString(
-      "base64url"
-    )
-  );
+  // The week feed has no upper bound on createdAt (only a lower-bound cutoff
+  // in lib/db.ts), so a few minutes in the future still sorts newest-first
+  // and is guaranteed to land on page 1 no matter what else other test
+  // files are writing to the shared table at the same time.
+  const memeId = randomUUID();
+  const creatorId = `test-browse-tampered-${Date.now()}`;
+  const createdAt = new Date(Date.now() + 5 * 60000).toISOString();
 
-  const idsOf = (page) => page.memes.map((m) => m.id);
-  assert.deepStrictEqual(idsOf(garbage), idsOf(page1), "garbage base64 cursor must be ignored, serving page 1");
-  assert.deepStrictEqual(idsOf(wrongPk), idsOf(page1), "a cursor with the wrong GSI3PK must be ignored, serving page 1");
+  try {
+    await seedFeedMeme(dynamo, TABLE, { memeId, creatorId, createdAt });
+
+    const garbage = await getFeedPage("week", "not-valid-base64url!!!");
+    const wrongPk = await getFeedPage(
+      "week",
+      Buffer.from(JSON.stringify({ GSI3PK: "NOT#FEED", GSI3SK: "2020-01-01T00:00:00.000Z" }), "utf8").toString(
+        "base64url"
+      )
+    );
+
+    // If a tampered cursor were honored instead of ignored, DynamoDB would
+    // either error on the malformed key or start the query from the wrong
+    // place, so the seeded meme would not come back as the very first id.
+    assert.strictEqual(garbage.memes[0]?.id, memeId, "garbage base64 cursor must be ignored, serving page 1");
+    assert.strictEqual(wrongPk.memes[0]?.id, memeId, "a cursor with the wrong GSI3PK must be ignored, serving page 1");
+  } finally {
+    await deleteFeedMeme(dynamo, TABLE, { memeId });
+  }
 });
