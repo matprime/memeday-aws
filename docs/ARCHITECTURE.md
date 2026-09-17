@@ -285,7 +285,7 @@ convention held in application code, not in the table definition.
 | GSI1 (sparse) | `EMAIL#<email>` | `USER#<userId>` | `upsertUser` | Nothing today. Email login resolves through Cognito `ListUsers` instead. Kept because it is the cheap path if that changes |
 | GSI2 | `OWNER#<ownerId>` | `MEME#<createdAt>` | `createMeme` | Nothing today. Intended for "memes a user owns" once resale exists |
 | GSI2 (sparse) | `WALLET#<addr>` | `USER#<userId>` | `upsertUser` | `getUserByWallet` |
-| GSI3 | `FEED#GLOBAL` | `<createdAt>` | StreamHandler, on feed items | `getMemes` (newest-first global feed) |
+| GSI3 | `FEED#GLOBAL` | `<createdAt>` | StreamHandler, on feed items | `getMemes` (newest-first global feed); `getFeedPage` (KAN-86: range-filtered via `GSI3SK >= cutoff`, paginated, backs `/browse`) |
 
 GSI3 `MARKET#LISTED` sorted by zero-padded `priceSol`, described in v1, is
 PLANNED. Nothing writes or reads it.
@@ -300,7 +300,9 @@ user's likes is not implemented.
 - "Did user like?": `GetItem` on `LIKE#<userId>`
 - Meme of the day: `Query PK = FEED#GLOBAL`, `ScanIndexForward: false`,
   `Limit: 1`. This is why the feed item SK zero-pads the score to 15 digits:
-  it makes DynamoDB's lexicographic sort equal a numeric sort.
+  it makes DynamoDB's lexicographic sort equal a numeric sort. Distinct from
+  Browse's range-filtered, paginated read (`getFeedPage`, KAN-86), which
+  queries GSI3 by `GSI3SK` (chronological), never this base-table path.
 - Leaderboard: `Query PK = LEADERBOARD#GLOBAL`
 - Sale history (`SK begins_with OWNERSHIP#`): PLANNED, see above.
 

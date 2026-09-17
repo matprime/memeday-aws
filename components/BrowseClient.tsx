@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import Link from "next/link";
 import { DbMeme, Tab } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { MemeCard } from "./MemeCard";
@@ -13,10 +14,11 @@ const TABS: { id: Tab; label: string }[] = [
 
 interface Props {
   memes: DbMeme[];
+  range: Tab;
+  nextCursor: string | null;
 }
 
-export function BrowseClient({ memes }: Props) {
-  const [tab, setTab] = useState<Tab>("today");
+export function BrowseClient({ memes, range, nextCursor }: Props) {
   const { cognitoToken, reportedMemes, hydrateReportedMemes } = useAppStore();
 
   useEffect(() => {
@@ -26,33 +28,21 @@ export function BrowseClient({ memes }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cognitoToken, memes]);
 
-  const filtered = memes
-    .filter((m) => !reportedMemes.has(m.id))
-    .filter((m) => {
-      const posted = new Date(m.createdAt);
-      if (tab === "today") {
-        const today = new Date();
-        return posted.toDateString() === today.toDateString();
-      }
-      if (tab === "week") {
-        return posted >= new Date(Date.now() - 7 * 86400000);
-      }
-      return true;
-    });
+  const filtered = memes.filter((m) => !reportedMemes.has(m.id));
 
   return (
     <>
       <div className="flex gap-2 mb-8 bg-surface border border-border rounded-xl p-1.5 w-fit">
         {TABS.map(({ id, label }) => (
-          <button
+          <Link
             key={id}
-            onClick={() => setTab(id)}
+            href={`/browse?range=${id}`}
             className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
-              tab === id ? "bg-accent text-white shadow" : "text-gray-400 hover:text-white"
+              range === id ? "bg-accent text-white shadow" : "text-gray-400 hover:text-white"
             }`}
           >
             {label}
-          </button>
+          </Link>
         ))}
       </div>
 
@@ -63,11 +53,23 @@ export function BrowseClient({ memes }: Props) {
           <p className="text-sm mt-1">Be the first to post today!</p>
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filtered.map((m) => (
-            <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
-          ))}
-        </div>
+        <>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filtered.map((m) => (
+              <MemeCard key={m.id} meme={m} commentCount={m.commentCount} />
+            ))}
+          </div>
+          {nextCursor && (
+            <div className="flex justify-center mt-8">
+              <Link
+                href={`/browse?range=${range}&cursor=${encodeURIComponent(nextCursor)}`}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-surface border border-border text-gray-300 hover:text-white transition-all"
+              >
+                Next page
+              </Link>
+            </div>
+          )}
+        </>
       )}
     </>
   );
