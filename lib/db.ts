@@ -19,6 +19,7 @@ import type {
   DbUser,
   MintStatus,
   OpenReport,
+  Tab,
 } from "./types";
 import { NFT_ORPHANED_UPLOAD_RETENTION_SECONDS } from "./nft-config";
 import type { PartnerAttribution } from "./bags-server";
@@ -146,19 +147,13 @@ function withVerifiedTipDestination(meme: DbMeme, creators: Map<string, DbUser>)
   return { ...meme, creatorWalletAddr: undefined };
 }
 
-// Query FEED#GLOBAL via GSI3 (createdAt desc = newest first), BatchGet full items.
-export async function getMemes(): Promise<DbMeme[]> {
-  noStore();
-  const feedResult = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE,
-      IndexName: "GSI3",
-      KeyConditionExpression: "GSI3PK = :pk",
-      ExpressionAttributeValues: { ":pk": "FEED#GLOBAL" },
-      ScanIndexForward: false,
-    })
-  );
-  const items = feedResult.Items ?? [];
+// Shared by getMemes and getFeedPage: BatchGet the full Meme items behind a
+// GSI3 page's feed-item stubs, then apply the tip-destination gate. Pulled
+// out because both callers need the exact same hydration, not because either
+// one needed it alone.
+async function hydrateFeedItems(
+  items: Record<string, unknown>[]
+): Promise<DbMeme[]> {
   if (items.length === 0) return [];
 
   const keys = items.map((item) => ({
@@ -176,6 +171,100 @@ export async function getMemes(): Promise<DbMeme[]> {
     memes.filter((m) => m.creatorWalletAddr).map((m) => m.creatorId)
   );
   return memes.map((m) => withVerifiedTipDestination(m, creators));
+}
+
+// Query FEED#GLOBAL via GSI3 (createdAt desc = newest first), BatchGet full items.
+export async function getMemes(): Promise<DbMeme[]> {
+  noStore();
+  const feedResult = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI3",
+      KeyConditionExpression: "GSI3PK = :pk",
+      ExpressionAttributeValues: { ":pk": "FEED#GLOBAL" },
+      ScanIndexForward: false,
+    })
+  );
+  return hydrateFeedItems(feedResult.Items ?? []);
+}
+
+const FEED_PAGE_SIZE = 24;
+
+// Base64url JSON of a GSI3 LastEvaluatedKey. It arrives from the URL on the
+// next request, so it is untrusted: only a decoded object whose GSI3PK is
+// exactly FEED#GLOBAL is honored, anything else (garbage base64, tampered
+// PK, non-JSON) falls back to page 1 rather than being sent to DynamoDB.
+function encodeFeedCursor(key: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(key), "utf8").toString("base64url");
+}
+
+function decodeFeedCursor(
+  cursor: string | undefined
+): Record<string, unknown> | undefined {
+  if (!cursor) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8")
+    );
+    if (
+      decoded &&
+      typeof decoded === "object" &&
+      (decoded as Record<string, unknown>).GSI3PK === "FEED#GLOBAL"
+    ) {
+      return decoded as Record<string, unknown>;
+    }
+  } catch {
+    // Falls through to page 1.
+  }
+  return undefined;
+}
+
+function feedCutoff(range: Tab): string | undefined {
+  if (range === "today") {
+    const now = new Date();
+    return new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    ).toISOString();
+  }
+  if (range === "week") {
+    return new Date(Date.now() - 7 * 86400000).toISOString();
+  }
+  return undefined;
+}
+
+// Paginated, range-filtered GSI3 read for /browse (KAN-86). Unlike getMemes,
+// this filters server-side on GSI3SK (createdAt) rather than pulling the
+// whole feed and filtering in the client. Page size is fixed at 24, well
+// under BatchGetCommand's 100-key limit.
+export async function getFeedPage(
+  range: Tab,
+  cursor?: string
+): Promise<{ memes: DbMeme[]; nextCursor: string | null }> {
+  noStore();
+  const cutoff = feedCutoff(range);
+  const exclusiveStartKey = decodeFeedCursor(cursor);
+
+  const values: Record<string, unknown> = { ":pk": "FEED#GLOBAL" };
+  if (cutoff !== undefined) values[":cutoff"] = cutoff;
+
+  const feedResult = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI3",
+      KeyConditionExpression:
+        cutoff !== undefined ? "GSI3PK = :pk AND GSI3SK >= :cutoff" : "GSI3PK = :pk",
+      ExpressionAttributeValues: values,
+      ScanIndexForward: false,
+      Limit: FEED_PAGE_SIZE,
+      ExclusiveStartKey: exclusiveStartKey,
+    })
+  );
+
+  const memes = await hydrateFeedItems(feedResult.Items ?? []);
+  const nextCursor = feedResult.LastEvaluatedKey
+    ? encodeFeedCursor(feedResult.LastEvaluatedKey)
+    : null;
+  return { memes, nextCursor };
 }
 
 // Query FEED#GLOBAL base table (score desc = highest score first), GetItem for full details.
