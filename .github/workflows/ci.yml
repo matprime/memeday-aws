@@ -5,6 +5,13 @@ on:
     branches: [ "main", "develop" ]
   pull_request:
 
+# Integration tests hit the shared MemeDayDev table, so two runs at once can
+# create and delete memes at the same time and make each other's feed reads
+# flaky. Queue runs on the same ref instead of letting them overlap.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
