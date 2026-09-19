@@ -60,7 +60,7 @@ export async function resolveAsset(
   if (!pending) return { problem: "ASSET_NOT_FOUND" };
   if (pending.creatorId !== userId) return { problem: "ASSET_NOT_OWNED" };
   if (pending.status === "rejected") return { problem: "ASSET_REJECTED" };
-  // Only an upload the validation Lambda has already cleared may be minted —
+  // Only an upload that has passed validation and content screening may be minted —
   // the same gate app/api/memes applies before a pending row becomes a meme.
   // Without it we would pin an unscreened image to Arweave permanently.
   if (pending.status !== "active") return { problem: "ASSET_NOT_VALIDATED" };

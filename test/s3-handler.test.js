@@ -109,6 +109,7 @@ test("S3Handler: successful validation invokes ModerationHandler with the bucket
     .toBuffer();
 
   const invokeCalls = [];
+  const updates = [];
   const restoreS3 = mockSend(s3, {
     GetObjectCommand: async () => ({
       Body: { transformToByteArray: async () => validImage },
@@ -120,7 +121,10 @@ test("S3Handler: successful validation invokes ModerationHandler with the bucket
   });
   const restoreDoc = mockSend(docClient, {
     GetCommand: async () => ({ Item: { PK: "PENDING#success-abc", SK: "PENDING#success-abc", status: "pending" } }),
-    UpdateCommand: async () => ({}),
+    UpdateCommand: async (cmd) => {
+      updates.push(cmd.input);
+      return {};
+    },
   });
   const restoreLambda = mockSend(lambdaClient, {
     InvokeCommand: async (cmd) => {
@@ -143,13 +147,79 @@ test("S3Handler: successful validation invokes ModerationHandler with the bucket
   const payload = JSON.parse(Buffer.from(invokeCalls[0].Payload).toString());
   assert.strictEqual(payload.key, key, "handoff payload carries the key S3Handler just validated");
   assert.ok(payload.bucket, "handoff payload carries the bucket");
+
+  assert.strictEqual(updates.length, 1);
+  assert.strictEqual(
+    updates[0].ExpressionAttributeValues[":screening"],
+    "screening",
+    "validation alone marks the upload screening, never active — only ModerationHandler may do that"
+  );
+  assert.ok(
+    !Object.values(updates[0].ExpressionAttributeValues).includes("active"),
+    "S3Handler never writes status active"
+  );
+});
+
+test("S3Handler: a failed ModerationHandler invoke rejects the upload instead of leaving it screening", async () => {
+  const sharp = require("sharp");
+  const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
+
+  const key = "uploads/test-user/invoke-fail-ghi.png";
+  const validImage = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 10, g: 20, b: 30 } },
+  })
+    .png()
+    .toBuffer();
+
+  const updates = [];
+  const deletes = [];
+  const restoreS3 = mockSend(s3, {
+    GetObjectCommand: async () => ({
+      Body: { transformToByteArray: async () => validImage },
+      ContentType: "image/png",
+      Metadata: {},
+    }),
+    PutObjectCommand: async () => ({}),
+    DeleteObjectCommand: async (cmd) => {
+      deletes.push(cmd.input.Key);
+      return {};
+    },
+  });
+  const restoreDoc = mockSend(docClient, {
+    GetCommand: async () => ({ Item: { PK: "PENDING#invoke-fail-ghi", SK: "PENDING#invoke-fail-ghi", status: "pending" } }),
+    UpdateCommand: async (cmd) => {
+      updates.push(cmd.input);
+      return {};
+    },
+  });
+  const restoreLambda = mockSend(lambdaClient, {
+    InvokeCommand: async () => {
+      throw Object.assign(new Error("Rate exceeded"), { name: "TooManyRequestsException" });
+    },
+  });
+  const originalError = console.error;
+  console.error = () => {};
+
+  try {
+    await handler({ Records: [{ s3: { object: { key, size: validImage.length } } }] }, {}, () => {});
+  } finally {
+    console.error = originalError;
+    restoreS3();
+    restoreDoc();
+    restoreLambda();
+  }
+
+  const last = updates[updates.length - 1];
+  assert.strictEqual(last.ExpressionAttributeValues[":rejected"], "rejected", "final status is rejected");
+  assert.match(last.ExpressionAttributeValues[":reason"], /couldn't screen/i, "reason tells the user to retry");
+  assert.deepStrictEqual(deletes, [key], "the unscreened object is deleted");
 });
 
 test("S3Handler: rejected upload (fails validation) never invokes ModerationHandler", async () => {
   const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
 
   // Minimal valid 1×1 PNG — passes the magic-bytes check but fails the
-  // MIN_LONG_EDGE=400/MIN_SHORT_EDGE=150 check, so it's rejected before any re-encode/markActive.
+  // MIN_LONG_EDGE=400/MIN_SHORT_EDGE=150 check, so it's rejected before any re-encode/markScreening.
   const PNG_1X1 = Buffer.from(
     "89504e470d0a1a0a0000000d494844520000000100000001080600000" +
       "01f15c4890000000a4944415478016360000000020001e221bc33000000004945" +

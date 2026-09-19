@@ -40,21 +40,25 @@ const UNSCREENABLE_FORMATS: Record<string, string> = {
   webp: "GIF and WEBP are not currently supported. Please upload a JPEG or PNG.",
 };
 
+const SCREENING_UNAVAILABLE_REASON = "We couldn't screen this image. Please try again.";
+
 // Key format: uploads/<userId>/<pendingId>.<ext> (see app/api/upload-url).
 function pendingIdFromKey(key: string): string | null {
   const match = key.match(/^uploads\/[^/]+\/([^/.]+)\.[^/.]+$/);
   return match ? match[1] : null;
 }
 
-async function markActive(pendingId: string): Promise<void> {
+// Not "active": only ModerationHandler may mark an upload active, once
+// Rekognition has cleared it.
+async function markScreening(pendingId: string): Promise<void> {
   await docClient.send(
     new UpdateCommand({
       TableName: TABLE,
       Key: { PK: `PENDING#${pendingId}`, SK: `PENDING#${pendingId}` },
-      UpdateExpression: "SET #status = :active REMOVE reason",
+      UpdateExpression: "SET #status = :screening REMOVE reason",
       ConditionExpression: "attribute_exists(PK)",
       ExpressionAttributeNames: { "#status": "status" },
-      ExpressionAttributeValues: { ":active": "active" },
+      ExpressionAttributeValues: { ":screening": "screening" },
     })
   );
 }
@@ -183,14 +187,13 @@ export const handler: S3Handler = async (event) => {
         })
       );
 
-      await markActive(pendingId);
+      await markScreening(pendingId);
       console.log(`Validated upload: key=${key} size=${size} format=${metadata.format} dims=${width}x${height}`);
 
-      // Fire-and-forget: ModerationHandler is invoked directly (no S3 subscription
-      // of its own) now that this is the only Lambda subscribed to the bucket
-      // event. A failed invoke here (throttled, unavailable) must not roll back
-      // the validation that already succeeded — the image is already marked
-      // active. ModerationHandlerErrorsAlarm is the backstop for catching this.
+      // ModerationHandler has no S3 subscription of its own, so it is invoked
+      // directly here. It is async (Event) but not optional: it is the only
+      // thing that moves the upload from screening to active. If the invoke
+      // fails, reject so the client gets an answer instead of a poll timeout.
       try {
         await lambdaClient.send(
           new InvokeCommand({
@@ -201,6 +204,7 @@ export const handler: S3Handler = async (event) => {
         );
       } catch (err) {
         console.error(`Failed to invoke ModerationHandler for key=${key}:`, err);
+        await reject(key, pendingId, SCREENING_UNAVAILABLE_REASON);
       }
     } catch (err) {
       console.error(`Failed to process ${key}:`, err);

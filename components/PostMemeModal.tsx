@@ -122,11 +122,11 @@ export function PostMemeModal({ onClose }: Props) {
     return { pendingId, imageUrl };
   };
 
-  // The S3Handler Lambda validates the upload asynchronously (fires on the S3
-  // ObjectCreated event). Poll until it flips the pending record to active or
-  // rejected before proceeding — the meme can't be finalized until then.
+  // S3Handler validates the upload, then ModerationHandler screens it; only a
+  // clean screen marks the pending record active. Poll until active or
+  // rejected — the meme can't be finalized or minted until then.
   const waitForValidation = async (pendingId: string): Promise<void> => {
-    for (let attempt = 0; attempt < 16; attempt++) {
+    for (let attempt = 0; attempt < 26; attempt++) {
       const res = await fetch(`/api/upload-status/${pendingId}`, {
         headers: { Authorization: `Bearer ${await requireToken()}` },
       });
@@ -138,7 +138,7 @@ export function PostMemeModal({ onClose }: Props) {
       }
       // Tight at first: the Lambda usually answers within a second or two, and
       // a fixed 1.5s poll spent most of its time waiting on an answer that was
-      // already there. Backs off so a slow validation still gets ~15s.
+      // already there. Backs off so a slow validation + screen still gets ~30s.
       await new Promise((resolve) => setTimeout(resolve, attempt < 6 ? 400 : 1500));
     }
     throw new Error("Upload validation timed out — please try again");
@@ -151,10 +151,25 @@ export function PostMemeModal({ onClose }: Props) {
     try {
       const walletAddress = publicKey?.toBase58() ?? "";
 
+      // 1. Upload image to S3 via presigned URL
+      setStep("uploading");
+      let pendingId: string;
+      let imageUrl: string;
+      try {
+        ({ pendingId, imageUrl } = await uploadImage(selectedImage, caption.trim()));
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : "Image upload failed");
+      }
+
+      // 1b. Wait for validation and content screening
+      setStep("validating");
+      await waitForValidation(pendingId);
+
       // Paying for Arweave storage is the slowest step in a mint — a
       // transaction confirming, then the Irys node crediting it — and it needs
-      // nothing but the file's size. Started here, it runs while the image
-      // uploads and the validation Lambda screens it, instead of after.
+      // nothing but the file's size. Started here, it runs during the user
+      // upsert and wallet link below. It must not start before screening
+      // passes: it is a paid wallet prompt.
       //
       // Gated on publicKey rather than authMethod, matching the mint gate
       // below: an email signup with a wallet connected is allowed to mint.
@@ -169,20 +184,6 @@ export function PostMemeModal({ onClose }: Props) {
       // Awaited inside mintMemeNft, where a failure becomes the user's error;
       // this only stops it counting as unhandled in the meantime.
       storageReady?.catch(() => {});
-
-      // 1. Upload image to S3 via presigned URL
-      setStep("uploading");
-      let pendingId: string;
-      let imageUrl: string;
-      try {
-        ({ pendingId, imageUrl } = await uploadImage(selectedImage, caption.trim()));
-      } catch (err) {
-        throw new Error(err instanceof Error ? err.message : "Image upload failed");
-      }
-
-      // 1b. Wait for the S3Handler Lambda to validate the upload
-      setStep("validating");
-      await waitForValidation(pendingId);
 
       // 2. Upsert the user record and, for an email signup, prove the connected
       // wallet. This has to happen BEFORE the mint, not after: /api/mint/prepare
@@ -302,7 +303,10 @@ export function PostMemeModal({ onClose }: Props) {
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to save meme");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to save meme");
+      }
 
       const { meme } = await res.json();
       track(EVENTS.memeUploaded, { memeId: meme?.id, isNFT, minted: !!mintAddress });

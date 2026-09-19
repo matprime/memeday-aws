@@ -20,8 +20,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "pendingId is required" }, { status: 400 });
     }
 
-    // Re-check server-side: only a pending upload the S3Handler Lambda has
-    // already validated (status: "active") may become a real, feed-visible meme.
+    // Re-check server-side: only a pending upload that has passed validation
+    // and content screening (status: "active") may become a real, feed-visible meme.
     const pending = await getPendingUpload(pendingId);
     if (!pending || pending.creatorId !== userId) {
       return NextResponse.json({ error: "Pending upload not found" }, { status: 404 });

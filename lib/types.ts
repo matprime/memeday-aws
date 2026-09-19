@@ -96,7 +96,7 @@ export interface DbPendingUpload {
   creatorId: string;        // Cognito sub
   s3Key: string;
   caption: string;
-  status: "pending_upload" | "active" | "rejected";
+  status: "pending_upload" | "screening" | "active" | "rejected";
   reason?: string;          // set when status = "rejected"
   createdAt: string;
 }
