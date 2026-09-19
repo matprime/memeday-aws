@@ -13,6 +13,7 @@ import { BagsLaunchClaim } from "@/components/BagsLaunchClaim";
 import { MintNftButton, MINT_STEP_LABELS } from "@/components/MintNftButton";
 import { useDialogDismiss } from "@/lib/useDialogDismiss";
 import { postOutcome } from "@/lib/post-outcome";
+import { FEED_REFRESH_DELAYS_MS } from "@/lib/feed-refresh";
 import type { MintStatus } from "@/lib/types";
 
 interface Props {
@@ -309,6 +310,14 @@ export function PostMemeModal({ onClose }: Props) {
       const outcome = postOutcome({ caption: caption.trim(), isNFT, minted: !!mintAddress });
       addToast(outcome.message, outcome.tone === "success" ? "success" : "error");
       router.refresh();
+      // FEED#GLOBAL is written by StreamHandler off the DynamoDB stream, so
+      // the refresh above can land before the new meme is there. These fire
+      // regardless of whether the modal is still open or this component is
+      // still mounted: closing the success screen right away must not cancel
+      // them, since the feed still needs to catch up either way.
+      for (const delay of FEED_REFRESH_DELAYS_MS) {
+        setTimeout(() => router.refresh(), delay);
+      }
       // Stay open on a success screen instead of closing: the Bags launch
       // action needs the meme's public CloudFront URL, which only exists
       // once the API response comes back (see components/BagsLaunchClaim.tsx).
