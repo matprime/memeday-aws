@@ -71,7 +71,13 @@ function logModerationResult(params: {
   key: string;
   pendingId: string;
   labels: ModerationLabel[];
-  action: "published" | "blocked" | "pending_review" | "blocked_orphan";
+  action:
+    | "published"
+    | "blocked"
+    | "pending_review"
+    | "blocked_orphan"
+    | "screening_failed"
+    | "not_screening";
 }): void {
   console.log(
     JSON.stringify({
@@ -84,16 +90,16 @@ function logModerationResult(params: {
   );
 }
 
-// Applies a block decision to whichever record currently represents this
-// upload. Screening runs async relative to the upload flow, so either a
-// PENDING# record still exists (finalize hasn't happened yet — the common
-// case, since finalize is gated on S3Handler's validation, not moderation),
-// or the client already raced ahead and finalized into a MEME# item.
-async function applyBlockDecision(
-  pendingId: string
-): Promise<"blocked" | "pending_review" | "blocked_orphan"> {
-  const GENERIC_REASON = "Content does not meet our community guidelines.";
+const GENERIC_REASON = "Content does not meet our community guidelines.";
+const SCREENING_FAILED_REASON = "We couldn't screen this image. Please try again.";
 
+// Finalize and mint both require status "active", and only this Lambda sets
+// it, so a PENDING# record should always still exist here. The MEME# branch
+// is a backstop for memes finalized before screening gated finalize.
+async function applyBlockDecision(
+  pendingId: string,
+  reason: string = GENERIC_REASON
+): Promise<"blocked" | "pending_review" | "blocked_orphan"> {
   try {
     await docClient.send(
       new UpdateCommand({
@@ -102,7 +108,7 @@ async function applyBlockDecision(
         UpdateExpression: "SET #status = :rejected, reason = :reason",
         ConditionExpression: "attribute_exists(PK)",
         ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: { ":rejected": "rejected", ":reason": GENERIC_REASON },
+        ExpressionAttributeValues: { ":rejected": "rejected", ":reason": reason },
       })
     );
     return "blocked";
@@ -128,6 +134,27 @@ async function applyBlockDecision(
   }
 }
 
+// Conditional on "screening" so a clean result never revives an upload that
+// was rejected or has expired. Returns false when the condition fails.
+async function markActive(pendingId: string): Promise<boolean> {
+  try {
+    await docClient.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `PENDING#${pendingId}`, SK: `PENDING#${pendingId}` },
+        UpdateExpression: "SET #status = :active",
+        ConditionExpression: "#status = :screening",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":active": "active", ":screening": "screening" },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name !== "ConditionalCheckFailedException") throw err;
+    return false;
+  }
+}
+
 export const handler = async (event: ModerationInvokeEvent): Promise<void> => {
   const { bucket, key } = event;
 
@@ -148,13 +175,10 @@ export const handler = async (event: ModerationInvokeEvent): Promise<void> => {
       );
       labels = result.ModerationLabels ?? [];
     } catch (err) {
-      // Fail open, matching S3Handler's existing convention of logging and
-      // leaving state as-is on unexpected errors rather than inventing a
-      // stricter failure posture. Known gap: Rekognition's
-      // DetectModerationLabels only supports JPEG/PNG, so GIF/WEBP uploads
-      // (both allowed by S3Handler) always land here and publish
-      // unscreened — flagging as a follow-up, not solved by this ticket.
+      // Fail closed: an unscreened upload never becomes active.
       console.error(`Rekognition call failed for key=${key} pendingId=${pendingId}:`, err);
+      await applyBlockDecision(pendingId, SCREENING_FAILED_REASON);
+      logModerationResult({ key, pendingId, labels: [], action: "screening_failed" });
       return;
     }
 
@@ -167,7 +191,8 @@ export const handler = async (event: ModerationInvokeEvent): Promise<void> => {
       }
       logModerationResult({ key, pendingId, labels, action: outcome });
     } else {
-      logModerationResult({ key, pendingId, labels, action: "published" });
+      const activated = await markActive(pendingId);
+      logModerationResult({ key, pendingId, labels, action: activated ? "published" : "not_screening" });
     }
   } catch (err) {
     console.error(`Failed to process ${key}:`, err);
@@ -178,7 +203,9 @@ export {
   pendingIdFromKey,
   isBlocked,
   applyBlockDecision,
+  markActive,
   logModerationResult,
+  docClient,
   BLOCK_LABELS,
   BLOCK_CONFIDENCE_THRESHOLD,
   rekognition,

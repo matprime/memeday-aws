@@ -147,26 +147,125 @@ test("logModerationResult: clean result logs action=published", async () => {
 // only after its own validation succeeds). Rekognition is mocked by swapping
 // .send on the exported client instance; no live Rekognition calls.
 
-test("handler: processes a {bucket, key} payload directly, publishes on a clean result (no S3 call needed)", async () => {
-  const { handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
+test("handler: processes a {bucket, key} payload directly, marks a screening upload active on a clean result", async () => {
+  const { handler, rekognition, docClient } = await import("../lambdas/moderation-handler/index.ts");
 
   const originalSend = rekognition.send;
+  const originalDocSend = docClient.send;
   const originalLog = console.log;
   const lines = [];
+  const updates = [];
   console.log = (msg) => lines.push(msg);
   rekognition.send = async () => ({ ModerationLabels: [{ Name: "Suggestive", Confidence: 91 }] });
+  docClient.send = async (cmd) => {
+    updates.push(cmd.input);
+    return {};
+  };
 
   try {
     await handler({ bucket: "test-bucket", key: "uploads/user1/clean-xyz.png" });
   } finally {
     rekognition.send = originalSend;
+    docClient.send = originalDocSend;
     console.log = originalLog;
   }
+
+  assert.strictEqual(updates.length, 1);
+  assert.deepStrictEqual(updates[0].Key, { PK: "PENDING#clean-xyz", SK: "PENDING#clean-xyz" });
+  assert.strictEqual(updates[0].ExpressionAttributeValues[":active"], "active");
+  assert.strictEqual(updates[0].ConditionExpression, "#status = :screening", "only a screening upload can be activated");
 
   assert.strictEqual(lines.length, 1);
   const parsed = JSON.parse(lines[0]);
   assert.strictEqual(parsed.action, "published");
   assert.strictEqual(parsed.pendingId, "clean-xyz");
+});
+
+async function setPendingStatus(dynamo, TABLE, id, status) {
+  const { UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+  await dynamo.send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` },
+      UpdateExpression: "SET #status = :status",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: { ":status": status },
+    })
+  );
+}
+
+test("handler: a Rekognition error fails closed — the upload is rejected, never activated", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
+  const { createPendingUpload, getPendingUpload } = await import("../lib/db.ts");
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+
+  const id = randomUUID();
+  const creatorId = `test-mod-fail-${Date.now()}`;
+  const key = `uploads/${creatorId}/${id}.png`;
+
+  await createPendingUpload({ id, creatorId, s3Key: key, caption: "moderation fail-closed test" });
+  await setPendingStatus(dynamo, TABLE, id, "screening");
+
+  const originalSend = rekognition.send;
+  const originalError = console.error;
+  const originalLog = console.log;
+  const lines = [];
+  rekognition.send = async () => {
+    throw Object.assign(new Error("Request has invalid image format"), { name: "InvalidImageFormatException" });
+  };
+  console.error = () => {};
+  console.log = (msg) => lines.push(msg);
+
+  try {
+    await handler({ bucket: "test-bucket", key });
+
+    const pending = await getPendingUpload(id);
+    assert.strictEqual(pending.status, "rejected");
+    assert.match(pending.reason, /couldn't screen/i);
+    assert.strictEqual(JSON.parse(lines[0]).action, "screening_failed");
+  } finally {
+    rekognition.send = originalSend;
+    console.error = originalError;
+    console.log = originalLog;
+    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` } }));
+  }
+});
+
+test("handler: a clean result never revives an upload that was already rejected", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
+  const { createPendingUpload, getPendingUpload } = await import("../lib/db.ts");
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+
+  const id = randomUUID();
+  const creatorId = `test-mod-revive-${Date.now()}`;
+  const key = `uploads/${creatorId}/${id}.png`;
+
+  await createPendingUpload({ id, creatorId, s3Key: key, caption: "moderation no-revive test" });
+  await setPendingStatus(dynamo, TABLE, id, "rejected");
+
+  const originalSend = rekognition.send;
+  const originalLog = console.log;
+  const lines = [];
+  rekognition.send = async () => ({ ModerationLabels: [] });
+  console.log = (msg) => lines.push(msg);
+
+  try {
+    await handler({ bucket: "test-bucket", key });
+
+    const pending = await getPendingUpload(id);
+    assert.strictEqual(pending.status, "rejected");
+    assert.strictEqual(JSON.parse(lines[0]).action, "not_screening");
+  } finally {
+    rekognition.send = originalSend;
+    console.log = originalLog;
+    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` } }));
+  }
 });
 
 test("handler: blocked result from a {bucket, key} payload rejects the PENDING# record", async (t) => {
@@ -363,16 +462,17 @@ test("moderation block: flagged item is removed from FEED#GLOBAL (and GSI3) once
   }
 });
 
-test("moderation clean path: finalize proceeds through the normal publish flow unchanged", async (t) => {
+test("moderation clean path: a screened upload becomes active and finalizes through the normal publish flow", async (t) => {
   if (skipIfNoCredentials(t)) return;
 
-  const { isBlocked } = await import("../lambdas/moderation-handler/index.ts");
+  const { isBlocked, handler, rekognition } = await import("../lambdas/moderation-handler/index.ts");
   const { createPendingUpload, getPendingUpload, finalizeMeme, getMemeById } = await import("../lib/db.ts");
   const { dynamo, TABLE } = await import("../lib/dynamo.ts");
   const { DeleteCommand } = require("@aws-sdk/lib-dynamodb");
 
   const id = randomUUID();
   const creatorId = `test-mod-clean-${Date.now()}`;
+  const key = `uploads/${creatorId}/${id}.png`;
 
   // Clean Rekognition response: nothing in the block set.
   const cleanLabels = [label("Suggestive", 91), label("Alcohol", 88)];
@@ -381,15 +481,26 @@ test("moderation clean path: finalize proceeds through the normal publish flow u
   await createPendingUpload({
     id,
     creatorId,
-    s3Key: `uploads/${creatorId}/${id}.png`,
+    s3Key: key,
     caption: "moderation clean path test",
   });
+  await setPendingStatus(dynamo, TABLE, id, "screening");
+
+  const originalSend = rekognition.send;
+  const originalLog = console.log;
+  rekognition.send = async () => ({ ModerationLabels: cleanLabels });
+  console.log = () => {};
 
   try {
-    // No applyBlockDecision call — clean path is a pure no-op on the DB
-    // (see lambdas/moderation-handler/index.ts handler: only the blocked
-    // branch touches PENDING#/MEME# records).
+    try {
+      await handler({ bucket: "test-bucket", key });
+    } finally {
+      rekognition.send = originalSend;
+      console.log = originalLog;
+    }
+
     const pending = await getPendingUpload(id);
+    assert.strictEqual(pending.status, "active", "a clean screen is what makes the upload active");
     const meme = await finalizeMeme(pending, { isNFT: false });
     assert.strictEqual(meme.status, "active", "publish flow is unaffected by a clean moderation result");
 

@@ -343,30 +343,36 @@ as a description of current behavior.
    - strips EXIF by re-encoding with sharp and writes the cleaned file back
      to the same key with object metadata `validated=true`, which is also the
      guard against the resulting `OBJECT_CREATED` re-triggering this Lambda;
-   - marks the pending record `active`, or `rejected` with a reason and
-     deletes the object.
+   - marks the pending record `screening`, or `rejected` with a reason and
+     deletes the object. S3Handler never sets `active`.
    An upload whose `PENDING#` record is missing is treated as an orphan and
    the object is deleted.
-4. `S3Handler` then invokes `ModerationHandler` asynchronously. This invoke is
-   fire-and-forget: a failure must not roll back validation that already
-   succeeded. `ModerationHandlerErrorsAlarm` is the backstop.
+4. `S3Handler` then invokes `ModerationHandler` asynchronously
+   (`InvocationType: "Event"`). If the invoke fails, S3Handler rejects the
+   upload ("We couldn't screen this image") and deletes the object, so it
+   never sits in `screening` forever.
 5. `ModerationHandler` calls Rekognition `DetectModerationLabels` with
    `MinConfidence: 50`, then blocks if any returned label is in its explicit
    block list (explicit nudity, graphic violence, weapons, hate symbols) at
    confidence >= 80. The API-level minimum and the block threshold are
-   deliberately different numbers. It is FAIL-OPEN: a Rekognition error logs
-   and leaves state as-is.
-6. A block applies to whichever record still represents the upload:
-   - `PENDING#` still exists (the common case): status `rejected` with a
-     generic reason.
-   - the client already finalized: the `MEME#` item gets status
-     `pending_review`.
-   - neither: logged as `blocked_orphan`.
+   deliberately different numbers. It is FAIL-CLOSED: a Rekognition error
+   rejects the upload with a retry message.
+6. Outcomes:
+   - clean: `PENDING#` `screening` → `active`, conditional on the record still
+     being `screening`, so a clean result never revives a rejected or expired
+     upload. This is the only place `active` is set.
+   - block, `PENDING#` exists: status `rejected` with a generic reason.
+   - block, the `MEME#` item exists: status `pending_review`. Backstop only;
+     finalize requires `active`, so a meme cannot exist before screening.
+   - block, neither: logged as `blocked_orphan`.
 7. `POST /api/memes` refuses to finalize unless the pending record is
-   `status: "active"` and owned by the caller (`425` if still validating,
-   `422` if rejected). It reads the creator's wallet address at finalize
-   time, not at presign time, because the client upserts its profile in
-   between.
+   `status: "active"` and owned by the caller (`425` if still validating or
+   screening, `422` if rejected). `resolveAsset` (`lib/mint-service.ts`)
+   applies the same gate to every mint, and the client polls
+   `/api/upload-status` until `active` before it starts any paid wallet prompt
+   (Irys storage funding included). It reads the creator's wallet address at
+   finalize time, not at presign time, because the client upserts its profile
+   in between.
 
 `pending_review` memes are excluded everywhere: `getMemeById` returns null,
 `getMemesByCreator` filters them, and StreamHandler both refuses to add them

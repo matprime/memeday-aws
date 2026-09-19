@@ -34,8 +34,8 @@ registerHooks({
   },
 });
 
-// Mirrors what the S3Handler Lambda does on successful/failed validation
-// (lambdas/s3-handler/index.ts), without needing a real S3 upload.
+// Mirrors the Lambdas' final status writes (active: ModerationHandler after a
+// clean screen; rejected: S3Handler or ModerationHandler), without a real S3 upload.
 async function markActive(dynamo, TABLE, id) {
   const { UpdateCommand } = require("@aws-sdk/lib-dynamodb");
   await dynamo.send(
@@ -84,10 +84,10 @@ test("pending upload: valid path creates a real, feed-eligible meme", async (t) 
   let pending = await getPendingUpload(id);
   assert.strictEqual(pending.status, "pending_upload", "starts as pending_upload");
 
-  // Simulate the S3Handler Lambda validating the upload.
+  // Simulate validation + a clean screen.
   await markActive(dynamo, TABLE, id);
   pending = await getPendingUpload(id);
-  assert.strictEqual(pending.status, "active", "Lambda flips status to active");
+  assert.strictEqual(pending.status, "active", "a clean screen flips status to active");
 
   try {
     const meme = await finalizeMeme(pending, { isNFT: false });
@@ -157,4 +157,46 @@ test("pending upload: rejected path never produces a meme", async (t) => {
   await dynamo.send(
     new DeleteCommand({ TableName: TABLE, Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` } })
   );
+});
+
+test("pending upload: a validated but not yet screened upload cannot be minted", async (t) => {
+  if (!process.env.DYNAMODB_TABLE_NAME || !hasAwsCredentials()) {
+    t.skip("Missing DYNAMODB_TABLE_NAME or AWS credentials");
+    return;
+  }
+
+  const { createPendingUpload } = await import("../lib/db.ts");
+  const { resolveAsset } = await import("../lib/mint-service.ts");
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { UpdateCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+
+  const id = randomUUID();
+  const creatorId = `test-user-${Date.now()}`;
+
+  await createPendingUpload({
+    id,
+    creatorId,
+    s3Key: `uploads/${creatorId}/${id}.png`,
+    caption: "screening upload test",
+  });
+
+  try {
+    // What S3Handler writes once format checks pass, before moderation.
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` },
+        UpdateExpression: "SET #status = :screening",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":screening": "screening" },
+      })
+    );
+
+    const resolved = await resolveAsset(id, creatorId);
+    assert.deepStrictEqual(resolved, { problem: "ASSET_NOT_VALIDATED" });
+  } finally {
+    await dynamo.send(
+      new DeleteCommand({ TableName: TABLE, Key: { PK: `PENDING#${id}`, SK: `PENDING#${id}` } })
+    );
+  }
 });
