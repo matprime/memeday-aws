@@ -2,6 +2,56 @@
 // tested directly: lib/nft.ts pulls in umi and the wallet adapter, neither of
 // which loads under `node --test`.
 
+// Same content-type guess used whether the image is a DynamoDB row's stored
+// url or a freshly uploaded Arweave one. Known gap, not fixed here: an
+// extensionless url (Arweave gateway links have none) falls through to
+// image/jpeg even for a PNG.
+export function imageMimeFromUrl(url: string): string {
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    default:
+      return "image/jpeg";
+  }
+}
+
+export interface NftMetadataDoc {
+  name: string;
+  symbol: string;
+  description: string;
+  image: string;
+  properties: {
+    files: { uri: string; type: string }[];
+    category: string;
+  };
+}
+
+// The one shape both storage modes emit: GET /api/nft-metadata/[id] for s3
+// (reading a stored row) and the client's direct Irys upload for irys
+// (nothing stored). Existing s3 rows must keep reading back exactly as they
+// did before this function existed.
+export function buildNftMetadataDoc(params: {
+  name: string;
+  description: string;
+  image: string;
+}): NftMetadataDoc {
+  return {
+    name: params.name,
+    symbol: "MDAY",
+    description: params.description,
+    image: params.image,
+    properties: {
+      files: [{ uri: params.image, type: imageMimeFromUrl(params.image) }],
+      category: "image",
+    },
+  };
+}
+
 // mpl-core stores the metadata uri inline in the asset account. Same value as
 // MAX_ON_CHAIN_URI_LEN in lib/nft-config.ts, duplicated rather than imported
 // because that module reads server env at import time.

@@ -21,7 +21,7 @@ import { pollSignatureConfirmation } from "@/lib/solana/confirm";
 import type { NftStorageProvider } from "@/lib/nft-config";
 import type { SolanaNetwork } from "@/lib/solana/network";
 import type { MintStatus } from "@/lib/types";
-import { checkUri, isUserRejection, onChainName } from "@/lib/nft-shared";
+import { buildNftMetadataDoc, checkUri, isUserRejection, onChainName } from "@/lib/nft-shared";
 
 // Irys picks its node from umi's cluster, which our RPC proxy URL cannot
 // declare, so the node is chosen explicitly from the network we were handed.
@@ -313,12 +313,23 @@ export async function mintMemeNft(params: MintParams): Promise<MintResult> {
   // found on-chain without the transaction signature.
   if (!state.metadataUri || state.status === "UPLOADING_METADATA") {
     onStage?.("UPLOADING_METADATA");
-    // Deliberately not a second Irys upload. Each one tops the wallet's Irys
-    // balance up with its own on-chain transaction and signs its own data
-    // item, so putting a 1KB JSON there cost two extra wallet prompts and the
-    // wait for another confirmation — for a document we can serve ourselves.
-    // The picture, which is the part that must outlive us, stays on Arweave.
-    const metadataUri = await registerMetadataUri(pictureUri, caption, await getToken());
+    // s3 mode: registering with our own API is one less wallet prompt (no
+    // Irys data item to sign) and the document is fine living in DynamoDB.
+    // irys mode: the mint is ImmutableMetadata, so a uri we serve ourselves
+    // breaks the NFT if this app goes away (KAN-10). The document goes to
+    // Arweave too, as its own upload. prefundStorage already covers this
+    // second file's cost, so it is normally an extra signature, not an extra
+    // funding transaction or confirmation wait.
+    const metadataUri =
+      storageProvider === "irys"
+        ? await umi.uploader.uploadJson(
+            buildNftMetadataDoc({
+              name: onChainName(caption),
+              description: "Meme NFT - MemeDay on Solana",
+              image: pictureUri,
+            })
+          )
+        : await registerMetadataUri(pictureUri, caption, await getToken());
     const asset = generateSigner(umi);
     await advance("AWAITING_SIGNATURE", {
       metadataUri: checkUri(metadataUri, "Metadata URI"),

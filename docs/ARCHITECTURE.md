@@ -74,8 +74,11 @@ touched by TTL.
 
 ### Media : Amazon S3 + CloudFront
 - S3 is a private bucket (`BLOCK_ALL` public access) holding meme images.
-  NFT metadata JSON is served from DynamoDB via `/api/nft-metadata/[id]`,
-  not from S3.
+  NFT metadata JSON is served from DynamoDB via `/api/nft-metadata/[id]`
+  when `NFT_STORAGE_PROVIDER=s3`, not from S3. When it is `irys`, the client
+  uploads the metadata JSON straight to Arweave via Irys instead (KAN-10);
+  no `NftMetadata` row is written and that route is never called for those
+  mints.
 - CloudFront (Origin Access Control) is the public read path, one
   distribution per stack.
 - Clients upload directly to S3 via presigned PUT URLs, bypassing Vercel.
