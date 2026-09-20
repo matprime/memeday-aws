@@ -100,3 +100,59 @@ test("checkUri: a missing uri names the step rather than throwing a TypeError", 
   assert.throws(() => checkUri(undefined, "Image URI"), /Image URI is missing/);
   assert.throws(() => checkUri("", "Image URI"), /Image URI is missing/);
 });
+
+// ---------------------------------------------------------------------------
+// KAN-10 residual: the metadata document builder, shared by the s3-mode GET
+// route (reading a stored row) and the irys-mode client (uploading straight
+// to Arweave, no row ever written).
+// ---------------------------------------------------------------------------
+
+test("imageMimeFromUrl: recognised extensions, query strings stripped first", async () => {
+  const { imageMimeFromUrl } = await load();
+
+  assert.equal(imageMimeFromUrl("https://cdn.test/a.png"), "image/png");
+  assert.equal(imageMimeFromUrl("https://cdn.test/a.gif"), "image/gif");
+  assert.equal(imageMimeFromUrl("https://cdn.test/a.webp"), "image/webp");
+  assert.equal(imageMimeFromUrl("https://cdn.test/a.jpg"), "image/jpeg");
+  assert.equal(imageMimeFromUrl("https://cdn.test/a.PNG?x=1"), "image/png");
+  // Known gap (not fixed here, listed in the report): an extensionless
+  // Arweave gateway url falls through to this default even for a PNG.
+  assert.equal(imageMimeFromUrl("https://gateway.irys.xyz/abc123"), "image/jpeg");
+});
+
+test("buildNftMetadataDoc: shape matches what the on-chain uri must resolve to", async () => {
+  const { buildNftMetadataDoc } = await load();
+
+  const doc = buildNftMetadataDoc({
+    name: "My Meme",
+    description: "Meme NFT - MemeDay on Solana",
+    image: "https://cdn.test/a.png",
+  });
+  assert.deepEqual(doc, {
+    name: "My Meme",
+    symbol: "MDAY",
+    description: "Meme NFT - MemeDay on Solana",
+    image: "https://cdn.test/a.png",
+    properties: {
+      files: [{ uri: "https://cdn.test/a.png", type: "image/png" }],
+      category: "image",
+    },
+  });
+});
+
+// GET /api/nft-metadata/[id] cannot run here without a live DynamoDB table
+// (see test/mint-api.test.js for routes that can), so this checks the same
+// thing mint-api.test.js checks for onChainName: the route's source calls the
+// shared builder with the row's own fields, untransformed, so an existing s3
+// row reads back exactly as it did before this function existed.
+test("the GET route builds its response with buildNftMetadataDoc, not its own copy", async () => {
+  const routeSource = require("node:fs").readFileSync(
+    path.join(__dirname, "..", "app", "api", "nft-metadata", "[id]", "route.ts"),
+    "utf8"
+  );
+  assert.match(routeSource, /from ["']@\/lib\/nft-shared["']/);
+  assert.match(
+    routeSource,
+    /buildNftMetadataDoc\(\{\s*name:\s*row\.name,\s*description:\s*row\.description,\s*image:\s*row\.image_url,?\s*\}\)/
+  );
+});
