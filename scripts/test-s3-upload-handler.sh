@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # Integration test for the S3 post-upload validation Lambda (S3Handler):
-#   valid image             -> pending record moves to "active", S3 object kept (re-encoded)
+#   valid image             -> pending record moves pending_upload -> screening -> active,
+#                               S3 object kept (re-encoded)
 #   oversized file          -> pending record moves to "rejected", S3 object deleted
 #   renamed .exe            -> pending record moves to "rejected" (magic-bytes mismatch), S3 object deleted
+#
+# "screening" is set by S3Handler once validation passes, and is not terminal:
+# only ModerationHandler (invoked async by S3Handler) moves it on to "active" or
+# "rejected" once Rekognition has cleared or blocked it. wait_status below keeps
+# polling through "screening"; a timeout still stuck on "screening" means
+# ModerationHandler never activated the upload, which is a product signal and
+# not a test bug (see the FAIL message in run_case).
 #
 # This drives the Lambda directly at the AWS-SDK level (creates the PENDING#
 # DynamoDB record + uploads/ S3 object the same way app/api/upload-url does),
@@ -15,6 +23,16 @@ set -uo pipefail
 
 STACK="${1:-MemeDayDev}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# wait_status budget: S3 event notification delivery, S3Handler cold start
+# (sharp init included), the async invoke of ModerationHandler, its own cold
+# start, and Rekognition's DetectModerationLabels call all sit on the path
+# from "screening" to a terminal status. None of these are usually slow on
+# their own, but stacked and cold they can add up to tens of seconds, so
+# 90s / 3s poll gives real margin without dragging out the common case, since
+# wait_status returns as soon as a terminal status is seen.
+TIMEOUT_SECS=90
+POLL_INTERVAL_SECS=3
 
 get_output() {
   aws cloudformation describe-stacks --stack-name "$STACK" \
@@ -89,12 +107,15 @@ s3_exists() {
   aws s3api head-object --bucket "$BUCKET" --key "$1" >/dev/null 2>&1
 }
 
-wait_status() { # $1=pendingId -> waits until status != pending_upload, prints final status
+wait_status() { # $1=pendingId -> waits for a terminal status (active|rejected), prints final status
   local pendingId="$1" status
-  for _ in $(seq 1 15); do
+  local attempts=$((TIMEOUT_SECS / POLL_INTERVAL_SECS))
+  for _ in $(seq 1 "$attempts"); do
     status="$(get_status "$pendingId")"
-    [ "$status" != "pending_upload" ] && [ "$status" != "MISSING" ] && { echo "$status"; return; }
-    sleep 2
+    case "$status" in
+      active|rejected) echo "$status"; return ;;
+    esac
+    sleep "$POLL_INTERVAL_SECS"
   done
   echo "$status"
 }
@@ -109,7 +130,10 @@ run_case() { # $1=desc $2=file $3=ext $4=expected(active|rejected)
   aws s3 cp "$file" "s3://$BUCKET/$key" --only-show-errors
 
   status="$(wait_status "$pendingId")"
-  if [ "$status" = "$expected" ]; then
+  if [ "$status" = "screening" ]; then
+    echo "FAIL: $desc -> still 'screening' after ${TIMEOUT_SECS}s: ModerationHandler did not activate the upload (real signal, not a script bug)"
+    FAIL=$((FAIL+1))
+  elif [ "$status" = "$expected" ]; then
     echo "PASS: $desc -> pending status = $status${REASON:+ (reason: $REASON)}"
     PASS=$((PASS+1))
   else
