@@ -15,6 +15,7 @@ import {
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Connection } from "@solana/web3.js";
 import { pollSignatureConfirmation } from "@/lib/solana/confirm";
+import { choosePriorityFee, computeBudgetInstructions } from "@/lib/solana/priority-fee";
 // Type-only: both modules validate server env at import time and must never be
 // pulled into the client bundle. The values themselves arrive as props via
 // components/WalletProvider.tsx.
@@ -382,6 +383,12 @@ async function signAndConfirm(args: {
 
   onStage?.("AWAITING_SIGNATURE");
 
+  // A failed lookup must not block the mint: choosePriorityFee falls back to
+  // its floor on no samples.
+  const connection = (umi.rpc as unknown as { connection: Connection }).connection;
+  const recentFees = await connection.getRecentPrioritizationFees().catch(() => []);
+  const priorityFee = choosePriorityFee(recentFees);
+
   let signature: string;
   try {
     // sendAndConfirm builds the transaction fresh, so a retry after a rejected
@@ -399,7 +406,9 @@ async function signAndConfirm(args: {
         },
         { type: "ImmutableMetadata" },
       ],
-    }).sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
+    })
+      .prepend(computeBudgetInstructions(priorityFee))
+      .sendAndConfirm(umi, { confirm: { commitment: "confirmed" } });
     signature = base58.deserialize(result.signature)[0];
   } catch (err) {
     if (isUserRejection(err)) {
