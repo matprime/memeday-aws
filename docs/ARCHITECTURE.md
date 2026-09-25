@@ -222,8 +222,10 @@ The proxy forwards only an allowlist of JSON-RPC methods
 general-purpose RPC billed to us. A batch is rejected whole if any member is
 off-allowlist. Adding an on-chain feature that needs a new method means
 adding it there. Deliberately excluded: `getProgramAccounts`,
-`getSignaturesForAddress`, `getBlock*`, `getTransaction`, and the DAS
-endpoints.
+`getSignaturesForAddress`, `getBlock*`, and the DAS endpoints.
+`getTransaction` and `getRecentPrioritizationFees` are allowed because the
+Irys storage top-up needs them (priority fee lookup and landing
+confirmation); the per-IP rpc rate limit still applies to both.
 
 Consequence: the proxy is HTTPS-only, so the WebSocket `signatureSubscribe`
 that `Connection.confirmTransaction` normally waits on is unavailable. Both

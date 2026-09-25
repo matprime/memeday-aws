@@ -143,6 +143,8 @@ test("rpc allowlist: methods the tip and mint flows need are permitted", async (
     "getBalance",
     "getAccountInfo",
     "getMinimumBalanceForRentExemption",
+    "getRecentPrioritizationFees",
+    "getTransaction",
   ]) {
     assert.ok(isAllowedRpcBody({ jsonrpc: "2.0", id: 1, method }), `blocked: ${method}`);
   }
@@ -154,7 +156,6 @@ test("rpc allowlist: expensive and abusable methods are refused", async () => {
     "getProgramAccounts",
     "getSignaturesForAddress",
     "getBlock",
-    "getTransaction",
     "getAssetsByOwner",
   ]) {
     assert.strictEqual(
@@ -176,6 +177,16 @@ test("rpc allowlist: a batch is rejected whole if any member is disallowed", asy
   // Otherwise a disallowed call rides along with a permitted one.
   assert.strictEqual(
     isAllowedRpcBody([...ok, { jsonrpc: "2.0", id: 3, method: "getProgramAccounts" }]),
+    false
+  );
+
+  // Same for a batch that mixes a newly allowed method with a refused one.
+  assert.strictEqual(
+    isAllowedRpcBody([
+      { jsonrpc: "2.0", id: 1, method: "getTransaction" },
+      { jsonrpc: "2.0", id: 2, method: "getRecentPrioritizationFees" },
+      { jsonrpc: "2.0", id: 3, method: "getSignaturesForAddress" },
+    ]),
     false
   );
 });
