@@ -6,11 +6,17 @@
 // Restricted to the methods the tip and mint flows actually need — an
 // unrestricted proxy would be scraped and used as a free general-purpose RPC
 // on our quota. Deliberately excluded: getProgramAccounts,
-// getSignaturesForAddress, getBlock*, getTransaction and the DAS endpoints.
+// getSignaturesForAddress, getBlock* and the DAS endpoints.
 //
 // "sendTransaction" is the wire method behind connection.sendRawTransaction().
 // The account/rent/simulate entries are what @metaplex-foundation/umi needs to
 // build a mint; see lib/nft.ts.
+//
+// The Irys storage top-up (@irys/web-upload-solana) needs two more.
+// getRecentPrioritizationFees sets the top-up's priority fee: refused, the SDK
+// falls back to a fee of 0 and the tx can be dropped on mainnet. getTransaction
+// is how it confirms the top-up landed: refused, it waits out a 30 s poll that
+// can never succeed. The per-IP rpc rate limit still bounds both.
 export const ALLOWED_RPC_METHODS = [
   // shared
   "getLatestBlockhash",
@@ -27,6 +33,9 @@ export const ALLOWED_RPC_METHODS = [
   "getSlot",
   "getBlockHeight",
   "getEpochInfo",
+  // mint priority fee (lib/nft.ts) and Irys storage top-up
+  "getRecentPrioritizationFees",
+  "getTransaction",
 ] as const;
 
 const ALLOWED = new Set<string>(ALLOWED_RPC_METHODS);
