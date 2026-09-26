@@ -9,13 +9,22 @@ import {
 } from "@/lib/db";
 import { getClientIp, isRateLimited, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyBagsLaunch, BagsVerifyError, type VerifyLaunchSuccess } from "@/lib/bags-server";
+import { SOLANA_ENABLED, SOLANA_NETWORK, SOLANA_DISABLED_MESSAGE } from "@/lib/solana/network";
 
-// Read-only against Bags and spends nothing, unlike the launch action itself
-// (a link-out that opens a real launch flow on bags.fm, live only). That's
-// why this route has no SOLANA_ENABLED / mainnet gate of its own: off
-// mainnet it still runs, just through the simulated branch inside
-// verifyBagsLaunch (see lib/bags-server.ts) instead of calling Bags.
+// Not read-only: this route writes a permanent USER#/TOKEN# binding to
+// DynamoDB (createVerifiedBagsToken, attribute_not_exists). Off live mode
+// verifyBagsLaunch returns a simulated mint, so a write during a mainnet
+// kill-switch window would burn the one-time binding on a fake mint and a
+// later real claim would get a 409. That is why the kill switch gates this
+// route on mainnet, like the /api/mint/* routes. Off mainnet (devnet/Preview)
+// the simulated branch still runs and binds, which is intended.
 export async function POST(req: Request) {
+  // Before auth and rate limiting: a disabled route should not spend rate-limit
+  // budget, and this matches the /api/mint/* routes.
+  if (!SOLANA_ENABLED && SOLANA_NETWORK === "mainnet") {
+    return NextResponse.json({ error: SOLANA_DISABLED_MESSAGE }, { status: 503 });
+  }
+
   const userId = await getUserIdFromRequest(req);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -97,6 +106,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     throw err;
+  }
+
+  // Defence in depth: a simulated mint must never become a permanent binding
+  // on mainnet, even if the live-mode condition changes later. Nothing has
+  // been read or written yet at this point.
+  if (result.simulated && SOLANA_NETWORK === "mainnet") {
+    return NextResponse.json({ error: SOLANA_DISABLED_MESSAGE }, { status: 503 });
   }
 
   // One token per meme is a permanent, one-time binding. Checked here first so
