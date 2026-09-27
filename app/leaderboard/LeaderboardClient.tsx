@@ -40,7 +40,7 @@ interface Props {
 }
 
 export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap, pointsRows }: Props) {
-  const [tab, setTab] = useState<"volume" | "memes" | "points">("volume");
+  const [tab, setTab] = useState<"volume" | "memes" | "points">("points");
   const [pointsPeriod, setPointsPeriod] = useState<PointsPeriod>("week");
   const [investTarget, setInvestTarget] = useState<Creator | null>(null);
   const [selectedCreator, setSelectedCreator] = useState<Creator | null>(null);
@@ -93,6 +93,18 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap,
         {/* Tab switcher */}
         <div className="flex gap-2 mb-8 border-b border-border">
           <button
+            onClick={() => setTab("points")}
+            className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
+              tab === "points"
+                ? "border-accent text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <Award size={14} /> Top by Points
+            </span>
+          </button>
+          <button
             onClick={() => setTab("volume")}
             className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
               tab === "volume"
@@ -114,18 +126,6 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap,
           >
             <span className="flex items-center gap-2">
               <ImageIcon size={14} /> Top Creators by Meme Count
-            </span>
-          </button>
-          <button
-            onClick={() => setTab("points")}
-            className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
-              tab === "points"
-                ? "border-accent text-white"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              <Award size={14} /> Top by Points
             </span>
           </button>
         </div>
