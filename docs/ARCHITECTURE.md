@@ -40,13 +40,14 @@ Vercel serverless (Next.js API routes) handle all synchronous work:
 | `/api/bags/launch-config` | Returns `{ live: false }` off mainnet, or `{ live: true, partnerWallet, partnerConfig }` on it, so the client knows whether to open bags.fm or run the mock |
 | `/api/bags/verify` | Verifies a claimed Bags launch (creatorship + partner attribution) on mainnet, or returns a simulated result off it, and stores the outcome either way |
 | `/api/bags/my-token` | Returns the caller's verified Bags token, if any — drives launch-button-vs-token-card in the UI |
+| `/api/points/me` | Authenticated. Returns the caller's current weekly and all-time points totals (KAN-101) |
 
 AWS Lambda handles event-driven and privileged work. Exactly three functions
 exist, all defined in `infra/lib/memeday-stack.ts`:
 
 | Lambda | Trigger | Does |
 |--------|---------|------|
-| `StreamHandler` | DynamoDB Streams (NEW_AND_OLD_IMAGES, batch 100, bisect on error, 3 retries) | Maintains the `FEED#GLOBAL` and `LEADERBOARD#GLOBAL` materialized views |
+| `StreamHandler` | DynamoDB Streams (NEW_AND_OLD_IMAGES, batch 100, bisect on error, 3 retries) | Maintains the `FEED#GLOBAL` and `LEADERBOARD#GLOBAL` materialized views; also awards/reverses points and maintains the `LB#DAY#`/`LB#WEEK#`/`LB#ALLTIME` leaderboards (KAN-101, see below) |
 | `S3Handler` | S3 `OBJECT_CREATED`, prefix `uploads/` | Validates, sanitizes and re-encodes uploads; then invokes ModerationHandler |
 | `ModerationHandler` | Direct async invoke from `S3Handler` (`InvocationType: "Event"`) | Rekognition content moderation |
 
@@ -254,6 +255,10 @@ and likes) retrievable in a single query.
 | RateLimit counter | `RATE#<identity>` | `<limitKey>#<windowStart>` | `requestCount`, `expiresAt` (TTL, window + 60s) |
 | Feed item | `FEED#GLOBAL` | `<score padded to 15 digits>#<memeId>` | snapshot: `memeId`, `creatorId`, `s3Key`, `caption`, `score`, plus `GSI3PK`/`GSI3SK`. Written only by StreamHandler |
 | Leaderboard | `LEADERBOARD#GLOBAL` | `USER#<creatorId>` | `creatorId`, `memeCount`, incremented/decremented by StreamHandler |
+| Points award (KAN-101) | `POINTS#<earnerId>` | `AWARD#<ACTION>#<keys>` | `points`, `action`, `sourceId`, `week` (ISO week UTC of the source item's `createdAt`), `createdAt`, `qualifyingMemeId?` (referrals only). ACTION ∈ UPLOAD/RECEIVE_LIKE/GIVE_LIKE/GIVE_COMMENT/RECEIVE_COMMENT/REFERRAL. No TTL — a permanent ledger. Written only by StreamHandler, one `attribute_not_exists(PK)` Put per award, so a replayed Streams record can never double-award |
+| Referral marker (KAN-101) | `POINTS#<referredUserId>` | `REFERREDBY` | `referrerId`, `createdAt`. Written by StreamHandler off a USER# item's `referredBy` attribute appearing (INSERT or MODIFY, whichever carries it first — see Points & Leaderboard below) |
+| Points daily counter (KAN-101) | `POINTS#<userId>` | `DAY#<yyyy-mm-dd>#<ACTION>` | `used` (points or count, depending on the action's cap unit — see `lib/points-config.ts`), TTL `expiresAt` (2 days). Enforces each action's daily cap; the day is the SOURCE item's UTC date, not "now" |
+| Points period total (KAN-101) | `LB#DAY#<yyyy-mm-dd>` / `LB#WEEK#<isoYear>-W<ww>` / `LB#ALLTIME` | `USER#<userId>` | `points`, `userId`, plus `GSI3PK = PK` and `GSI3SK = <points padded to 15 digits>#<userId>` — GSI3 is already overloaded for `FEED#GLOBAL` (see below), these are three more GSI3PK values on the same index. `LB#DAY#` items carry a TTL (8 days) since they're only ever queried for "today"; `LB#WEEK#`/`LB#ALLTIME` do not |
 
 \* `creatorId` is fixed.  + `ownerId` is currently always equal to
 `creatorId`; nothing changes it yet (see NFT resale below).  \*\* `symbol`/
@@ -291,6 +296,7 @@ convention held in application code, not in the table definition.
 | GSI2 | `OWNER#<ownerId>` | `MEME#<createdAt>` | `createMeme` | Nothing today. Intended for "memes a user owns" once resale exists |
 | GSI2 (sparse) | `WALLET#<addr>` | `USER#<userId>` | `upsertUser` | `getUserByWallet` |
 | GSI3 | `FEED#GLOBAL` | `<createdAt>` | StreamHandler, on feed items | `getMemes` (newest-first global feed); `getFeedPage` (KAN-86: range-filtered via `GSI3SK >= cutoff`, paginated, backs `/browse`) |
+| GSI3 (further overloaded) | `LB#DAY#<date>` / `LB#WEEK#<isoYear>-W<ww>` / `LB#ALLTIME` | `<points padded to 15 digits>#<userId>` | StreamHandler (KAN-101 `awardPoints`/`reverseAward`) | `getPointsLeaderboard` (top 50 by points, `ScanIndexForward: false`) |
 
 GSI3 `MARKET#LISTED` sorted by zero-padded `priceSol`, described in v1, is
 PLANNED. Nothing writes or reads it.
@@ -421,6 +427,80 @@ Mechanics (`lib/rate-limit.ts`):
 - The 429 body is identical on every route, so it cannot be used as a tuning
   oracle or an account-existence oracle.
 
+## Points & leaderboard (KAN-101)
+
+`lib/points-config.ts` is the single source of truth for point values and
+daily caps — nothing else may hardcode either. Separate from
+`lib/rate-limit-config.ts`: these bound how much a user can earn per day, not
+how many requests they can make.
+
+- Actions and points: upload 10 (cap 3 uploads/day), receive like 2 (cap 100
+  pts/day), give like 1 (cap 20 pts/day), give comment 3 (body ≥ 10 chars, one
+  award per meme per user, cap 10/day), receive comment 1 (cap 50 pts/day),
+  referral 20 (cap 3/day). A cap is a ceiling on the whole award, never
+  partial — an award that would push a day's total over its cap is rejected
+  outright, not truncated.
+- No points for a self-like, self-comment, or self-referral. Likes and
+  comments on a meme whose status is `pending_review` or `removed` earn
+  nothing for either side.
+- All awards and reversals happen in `lambdas/stream-handler/index.ts` only,
+  off DynamoDB Streams (`LIKE#`, `COMMENT#`, `MEME#`, and `USER#` records) —
+  never computed live and never touched by any API route.
+- One `TransactWriteItems` per award: the ledger row (`attribute_not_exists`,
+  so a replayed Streams record never double-awards), the day counter (capped
+  by a `ConditionExpression`), and an `ADD` to the day/week/all-time period
+  totals. On cancellation, `awardPoints` inspects `CancellationReasons`: if
+  every reason is `None`/`ConditionalCheckFailed`, the award already exists or
+  the day's cap is hit — an expected outcome, not an error, no retry. Any
+  other reason (`TransactionConflict` from a genuinely concurrent writer on
+  the same period-total item, throttling, ...) retries up to 3 attempts with
+  short jittered backoff before giving up; only then does it propagate to
+  `safePointsOp`, which logs and emits `PointsAwardFailure`. A separate,
+  always-run step then re-reads each period total's `points` and `SET`s
+  `GSI3SK` under a condition on the value just read — `ADD` can't keep a
+  derived sort key in sync itself, and this step has to run even when the
+  award above was rejected or exhausted its retries, since a concurrent award
+  may have moved `points` in the meantime regardless.
+- Reversal: when a published meme is flagged (`active`/`listed` → `pending_review`
+  or `removed`), its `AWARD#UPLOAD#<memeId>` is deleted and its points
+  subtracted back out of the period totals; if its creator's first clean meme
+  had qualified a referral (`qualifyingMemeId` match), that referral award is
+  reversed too. Daily counters are deliberately left untouched — only the
+  ledger and the totals it fed move. Like/comment awards already given
+  against that meme are not reversed; nothing in KAN-101 asked for that.
+- Referral (model A): `ShareBar` appends `&refBy=<sharerId>` (not `ref` — that
+  param already means something else, see `visit_from_share` below) when the
+  sharer is signed in. `components/ReferralCapture.tsx`, mounted at the root
+  layout, stores the first `refBy` it ever sees in `localStorage`
+  (first-touch). `POST /api/users` sends that stored value as `ref` on every
+  call; after its normal profile upsert it separately calls `attachReferrer`,
+  which validates the referrer exists and writes `referredBy` on the caller's
+  own `USER#` item, conditioned on `attribute_not_exists(referredBy) AND
+  createdAt > now - REFERRAL_ATTACH_WINDOW_HOURS` (24h) — so a stale
+  `?refBy` sitting in a browser for months can no longer attach, and only the
+  first successful attempt ever wins. This is a second write, after the one
+  that actually creates the `USER#` item (wallet sign-up's `USER#` row is
+  created earlier still, by `/api/auth/wallet/verify`'s own `upsertUser`
+  call) — so StreamHandler treats `referredBy` appearing on either an INSERT
+  or a MODIFY as the trigger for writing the `REFERREDBY` marker, not INSERT
+  alone. The referral award itself only fires later, off the referred user's
+  first clean `MEME#` INSERT (detected via `adjustLeaderboard`'s previous
+  count being 0) — attaching a referrer after the user already has memes
+  never awards anything, since that check only ever runs at insert time.
+- `ref=share&ch=<channel>` (see `visit_from_share` in
+  `docs/ANALYTICS_EVENTS.md`) and `refBy=<sharerId>` are independent query
+  params on the same share link, carried by the same `ShareBar` click, read by
+  two unrelated pieces of code.
+- Read: `GET /api/points/me` (authenticated) returns the caller's current
+  weekly and all-time totals only — no daily figure. The leaderboard tab's
+  Daily/Weekly/All-time toggle reads `getPointsLeaderboard`, a `Query` on
+  GSI3 by `GSI3PK = LB#<period>` (today's UTC day or ISO week, or
+  `LB#ALLTIME`), `ScanIndexForward: false`, `Limit: 50` — there's no way to
+  browse a past day or week today.
+- `app/leaderboard`'s "Top by Points" tab shows real users only, never
+  `MOCK_CREATORS` — the points program only means something for an account
+  that can actually earn.
+
 ## Observability
 
 - SNS topic `memeday-alerts` (prod) / `memeday-alerts-dev`, email
@@ -430,7 +510,10 @@ Mechanics (`lib/rate-limit.ts`):
   DynamoDB `ThrottledRequests` > 0 on the table and its GSIs (PAY_PER_REQUEST
   can still throttle); `MemeDay/RateLimitCounterFailure` > 20, dimensioned by
   `Stage`, which is the only signal that the fail-open rate limiter is
-  silently letting everything through.
+  silently letting everything through; `MemeDay/PointsAwardFailure` > 0,
+  dimensioned by `Stage` (KAN-101) — a genuine infra fault in the points path
+  (StreamHandler's `emitPointsAwardFailureMetric`), not a cancelled
+  transaction, which is an expected outcome and never emits this.
 - `MemeDay` is the custom metric namespace. Keep any future metric under it.
 - PostHog product analytics from the client (`lib/analytics.ts`). The event
   vocabulary is a closed list mirrored in `docs/ANALYTICS_EVENTS.md`, and
@@ -453,7 +536,10 @@ stack to be adopted into CloudFormation before `cdk deploy` will succeed.
 
 Lambdas have their own execution roles. S3Handler and ModerationHandler get
 S3 access scoped to `uploads/*`, and `lambda:InvokeFunction` on
-ModerationHandler specifically, not `*`.
+ModerationHandler specifically, not `*`. StreamHandler additionally gets
+CloudWatch `PutMetricData` conditioned on namespace `MemeDay` (KAN-101, for
+`PointsAwardFailure`), same condition-only scoping as the runtime user's grant
+above.
 
 ## Admin
 

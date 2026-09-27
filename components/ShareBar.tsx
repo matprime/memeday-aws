@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X, Send, MessageSquare, Facebook, Link2, Share2 } from "lucide-react";
 import { EVENTS, track } from "@/lib/analytics";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, decodeJwtSub } from "@/lib/store";
 import { useDialogDismiss } from "@/lib/useDialogDismiss";
 
 interface Props {
@@ -25,16 +25,25 @@ export const CHANNELS: readonly Channel[] = [
   "native",
 ];
 
-function buildShareUrl(memeId: string, channel: Channel) {
+// `ref=share&ch=...` is the existing share-attribution pair MemePageClient
+// reads for visit_from_share — `ref` there is compared literally against the
+// string "share", so KAN-101's referrer id rides in a distinct `refBy` param
+// instead of overloading `ref` a second way.
+function buildShareUrl(memeId: string, channel: Channel, referrerId: string | null) {
   const origin = window.location.origin;
-  return `${origin}/meme/${memeId}?ref=share&ch=${channel}&m=${memeId}`;
+  const base = `${origin}/meme/${memeId}?ref=share&ch=${channel}&m=${memeId}`;
+  return referrerId ? `${base}&refBy=${referrerId}` : base;
 }
 
 export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClassName }: Props) {
-  const { addToast } = useAppStore();
+  const { addToast, cognitoToken } = useAppStore();
   const [open, setOpen] = useState(false);
   const [canNativeShare, setCanNativeShare] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Signed-in sharer's own id, appended so KAN-101 can attribute a signup that
+  // lands from this share. null when signed out — buildShareUrl just omits it.
+  const referrerId = cognitoToken ? decodeJwtSub(cognitoToken) : null;
 
   useDialogDismiss({
     onClose: () => setOpen(false),
@@ -56,7 +65,7 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
 
   const handleTriggerClick = async () => {
     if (canNativeShare) {
-      const url = buildShareUrl(memeId, "native");
+      const url = buildShareUrl(memeId, "native", referrerId);
       try {
         await navigator.share({ title: caption, text: shareText, url });
         track(EVENTS.shareClicked, { memeId, channel: "native", surface });
@@ -69,7 +78,7 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
   };
 
   const handlePlatformClick = (channel: Exclude<Channel, "copy" | "native">) => {
-    const url = buildShareUrl(memeId, channel);
+    const url = buildShareUrl(memeId, channel, referrerId);
     const text = encodeURIComponent(shareText);
     const encodedUrl = encodeURIComponent(url);
     let shareLink: string;
@@ -95,7 +104,7 @@ export function ShareBar({ memeId, caption, creatorHandle, surface, triggerClass
   };
 
   const handleCopy = async () => {
-    const url = buildShareUrl(memeId, "copy");
+    const url = buildShareUrl(memeId, "copy", referrerId);
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);

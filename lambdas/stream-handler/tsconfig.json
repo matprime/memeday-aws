@@ -7,7 +7,10 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "."
+    // Matches the projectRoot CDK's NodejsFunction already bundles this
+    // Lambda from (see infra/lib/memeday-stack.ts) — needed since KAN-101
+    // imports lib/points-config.ts from the repo root.
+    "rootDir": "../.."
   },
   "exclude": ["node_modules", "dist"]
 }

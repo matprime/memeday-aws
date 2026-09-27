@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import { NFT_ORPHANED_UPLOAD_RETENTION_SECONDS } from "./nft-config";
 import type { PartnerAttribution } from "./bags-server";
+import { REFERRAL_ATTACH_WINDOW_HOURS, utcDateKey, isoWeekKey } from "./points-config";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -117,7 +118,7 @@ function parseUser(item: Record<string, unknown>): DbUser {
 // current walletVerifiedAt without a read per meme: one extra BatchGet for
 // the distinct creators in a page, alongside the BatchGet they already do for
 // the meme rows themselves.
-async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
+export async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
   const unique = [...new Set(userIds)];
   if (unique.length === 0) return new Map();
   const result = await dynamo.send(
@@ -1296,4 +1297,104 @@ export async function refreshMintNonce(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Points & leaderboard (KAN-101)
+// ---------------------------------------------------------------------------
+
+// Called from POST /api/users, after the profile upsert. A separate,
+// best-effort write so a bad/expired/self ref never fails the profile write
+// it rides along with — callers should catch and log, never surface this as
+// a request failure. Conditioned on the referred user's own createdAt so a
+// ?refBy sitting in localStorage past REFERRAL_ATTACH_WINDOW_HOURS can no
+// longer attach, and on attribute_not_exists(referredBy) so only the first
+// attempt ever wins. Returns false (not an error) for an unknown referrer, a
+// closed window, or an already-attached user.
+export async function attachReferrer(userId: string, referrerId: string): Promise<boolean> {
+  const referrer = await getUserById(referrerId);
+  if (!referrer) return false;
+
+  const cutoff = new Date(
+    Date.now() - REFERRAL_ATTACH_WINDOW_HOURS * 60 * 60 * 1000
+  ).toISOString();
+
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `USER#${userId}`, SK: `USER#${userId}` },
+        UpdateExpression: "SET referredBy = :referrerId",
+        ConditionExpression: "attribute_not_exists(referredBy) AND createdAt > :cutoff",
+        ExpressionAttributeValues: { ":referrerId": referrerId, ":cutoff": cutoff },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export type PointsPeriod = "day" | "week" | "all";
+
+export interface PointsLeaderboardEntry {
+  userId: string;
+  points: number;
+}
+
+// GSI3 is already overloaded for FEED#GLOBAL (see ARCHITECTURE.md); LB#DAY#/
+// LB#WEEK#/LB#ALLTIME are three more GSI3PK values on the same index, written
+// by lambdas/stream-handler's awardPoints. "day" and "week" always mean the
+// current UTC day/ISO week — there's no way to browse a past period from
+// this reader today.
+function pointsPeriodKey(period: PointsPeriod): string {
+  const now = new Date();
+  if (period === "all") return "LB#ALLTIME";
+  if (period === "day") return `LB#DAY#${utcDateKey(now)}`;
+  return `LB#WEEK#${isoWeekKey(now)}`;
+}
+
+// Top 50 earners for a period, highest points first (KAN-101). GSI3SK is the
+// points value zero-padded to 15 digits, so a lexicographic ScanIndexForward:
+// false read is also a numeric descending read.
+export async function getPointsLeaderboard(period: PointsPeriod): Promise<PointsLeaderboardEntry[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI3",
+      KeyConditionExpression: "GSI3PK = :pk",
+      ExpressionAttributeValues: { ":pk": pointsPeriodKey(period) },
+      ScanIndexForward: false,
+      Limit: 50,
+    })
+  );
+  return (result.Items ?? []).map((item) => ({
+    userId: item.userId as string,
+    points: (item.points as number) ?? 0,
+  }));
+}
+
+export interface UserPointsTotals {
+  weekly: number;
+  allTime: number;
+}
+
+// Backs GET /api/points/me. Two direct key reads, not a query — a caller
+// always wants their own current totals, never someone else's or a past
+// week's.
+export async function getUserPointsTotals(userId: string): Promise<UserPointsTotals> {
+  noStore();
+  const weekPk = `LB#WEEK#${isoWeekKey(new Date())}`;
+  const [weekResult, allTimeResult] = await Promise.all([
+    dynamo.send(new GetCommand({ TableName: TABLE, Key: { PK: weekPk, SK: `USER#${userId}` } })),
+    dynamo.send(new GetCommand({ TableName: TABLE, Key: { PK: "LB#ALLTIME", SK: `USER#${userId}` } })),
+  ]);
+  return {
+    weekly: (weekResult.Item?.points as number) ?? 0,
+    allTime: (allTimeResult.Item?.points as number) ?? 0,
+  };
 }

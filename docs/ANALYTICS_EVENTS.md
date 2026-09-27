@@ -61,6 +61,7 @@ developer clicks land in the funnels you are trying to read.
 | `bags_launch_started` | `handleLaunch` fires after the wallet gate passes, before either the live bags.fm link-out or the simulated `verify()` call. | `mode`: `"live" \| "simulated"` | `components/BagsLaunchClaim.tsx` |
 | `bags_verify_started` | `handleVerifyMint` fires after `extractBagsTokenMint` succeeds, before calling `verify(mint)`. | — | `components/BagsLaunchClaim.tsx` |
 | `bags_verify_confirmed` | `POST /api/bags/verify` succeeded and `setExistingToken` ran. | `simulated`, `tokenMint` | `components/BagsLaunchClaim.tsx` |
+| `points_leaderboard_viewed` | The "Top by Points" leaderboard tab is showing a given period — fires on first switch to that tab and again on every Daily/Weekly/All-time toggle change. | `period`: `"day" \| "week" \| "all"` | `app/leaderboard/LeaderboardClient.tsx` |
 
 Mint events deliberately carry **no** `memeId`: the meme row is created after the mint
 completes, so at mint time no id exists. Join them to the upload by person/session.
