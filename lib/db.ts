@@ -118,6 +118,34 @@ function parseUser(item: Record<string, unknown>): DbUser {
 // current walletVerifiedAt without a read per meme: one extra BatchGet for
 // the distinct creators in a page, alongside the BatchGet they already do for
 // the meme rows themselves.
+// BatchGetItem rejects more than 100 keys per call and, separately, can
+// return only some of a request's keys under throttling (UnprocessedKeys),
+// so any caller with an unbounded key list needs both chunking and a retry
+// loop, not just one or the other. getUsersByIds below predates this and
+// keeps its own copy of the same logic; this is for callers added after it
+// (hydrateFeedItems, getReportedMemeIds) that need the identical guarantee
+// over MEME# and REPORT# keys instead of USER# keys.
+async function batchGetAll(
+  keys: { PK: string; SK: string }[]
+): Promise<Record<string, unknown>[]> {
+  const responses: Record<string, unknown>[] = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    let chunk = keys.slice(i, i + 100);
+    while (chunk.length > 0) {
+      const result = await dynamo.send(
+        new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: chunk } } })
+      );
+      responses.push(...(result.Responses?.[TABLE] ?? []));
+      const unprocessed = result.UnprocessedKeys?.[TABLE]?.Keys as
+        | { PK: string; SK: string }[]
+        | undefined;
+      chunk = unprocessed ?? [];
+      if (chunk.length > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  return responses;
+}
+
 export async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
   const unique = [...new Set(userIds)];
   if (unique.length === 0) return new Map();
@@ -173,10 +201,8 @@ async function hydrateFeedItems(
     PK: `MEME#${item.memeId as string}`,
     SK: `MEME#${item.memeId as string}`,
   }));
-  const batchResult = await dynamo.send(
-    new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
-  );
-  const memes = (batchResult.Responses?.[TABLE] ?? [])
+  const responses = await batchGetAll(keys);
+  const memes = responses
     .map((item) => parseMeme(item as Record<string, unknown>))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
@@ -793,18 +819,10 @@ export async function getReportedMemeIds(
   memeIds: string[]
 ): Promise<string[]> {
   if (memeIds.length === 0) return [];
-  const batchResult = await dynamo.send(
-    new BatchGetCommand({
-      RequestItems: {
-        [TABLE]: {
-          Keys: memeIds.map((id) => ({ PK: `MEME#${id}`, SK: `REPORT#${identityHash}` })),
-        },
-      },
-    })
+  const responses = await batchGetAll(
+    memeIds.map((id) => ({ PK: `MEME#${id}`, SK: `REPORT#${identityHash}` }))
   );
-  return (batchResult.Responses?.[TABLE] ?? []).map(
-    (item) => (item.PK as string).slice("MEME#".length)
-  );
+  return responses.map((item) => (item.PK as string).slice("MEME#".length));
 }
 
 // Distinct reporters + reason/timestamps for a meme's REPORT# items, used by
