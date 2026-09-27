@@ -1,7 +1,31 @@
-import { getLeaderboardCounts, getMemesByCreator, getUserById } from "@/lib/db";
+import {
+  getLeaderboardCounts,
+  getMemesByCreator,
+  getUserById,
+  getPointsLeaderboard,
+  getUsersByIds,
+  type PointsPeriod,
+} from "@/lib/db";
 import { MOCK_CREATORS, MOCK_MEMES, creatorFromDbUser } from "@/lib/data";
 import { Creator } from "@/lib/types";
-import { LeaderboardClient } from "./LeaderboardClient";
+import { LeaderboardClient, type PointsRow } from "./LeaderboardClient";
+
+// Real users only, no MOCK_CREATORS (KAN-101) — the points program only means
+// something for accounts that can actually earn, unlike the demo-data-backed
+// Volume/Meme Count tabs above.
+async function buildPointsRows(period: PointsPeriod): Promise<PointsRow[]> {
+  try {
+    const entries = await getPointsLeaderboard(period);
+    const users = await getUsersByIds(entries.map((e) => e.userId));
+    return entries.map((e) => ({
+      userId: e.userId,
+      displayName: users.get(e.userId)?.displayName ?? e.userId.slice(0, 8),
+      points: e.points,
+    }));
+  } catch {
+    return [];
+  }
+}
 
 export default async function LeaderboardPage() {
   // Fetch creator meme counts from the leaderboard materialized view, then
@@ -64,11 +88,18 @@ export default async function LeaderboardPage() {
     (a, b) => b.memeCount - a.memeCount
   );
 
+  const [pointsByDay, pointsByWeek, pointsByAllTime] = await Promise.all([
+    buildPointsRows("day"),
+    buildPointsRows("week"),
+    buildPointsRows("all"),
+  ]);
+
   return (
     <LeaderboardClient
       creatorsByVolume={creatorsByVolume}
       creatorsByMemes={creatorsByMemes}
       memesMap={memesMap}
+      pointsRows={{ day: pointsByDay, week: pointsByWeek, all: pointsByAllTime }}
     />
   );
 }

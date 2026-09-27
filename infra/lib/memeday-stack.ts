@@ -187,6 +187,24 @@ export class MemeDayStack extends cdk.Stack {
       alarmDescription: "MemeDay rate limit counter write failures",
     }).addAlarmAction(alertAction);
 
+    // KAN-101: emitted by lambdas/stream-handler whenever a points award
+    // TransactWriteItems call throws something other than a cancellation
+    // (i.e. a genuine infra fault, not a duplicate/cap-rejected award).
+    new cloudwatch.Alarm(this, "PointsAwardFailureAlarm", {
+      metric: new cloudwatch.Metric({
+        namespace: "MemeDay",
+        metricName: "PointsAwardFailure",
+        dimensionsMap: { Stage: props.stage },
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 0,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "MemeDay points award failures",
+    }).addAlarmAction(alertAction);
+
     new cdk.CfnOutput(this, "AlertTopicArn", { value: alertTopic.topicArn });
 
     // --- S3 bucket + image validation handler ---
@@ -352,6 +370,20 @@ export class MemeDayStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: ["sns:Publish"],
         resources: [alertTopic.topicArn],
+      })
+    );
+
+    // KAN-101: points award failures (emitPointsAwardFailureMetric in
+    // lambdas/stream-handler). PutMetricData doesn't support resource-level
+    // ARNs, same as the runtime user's grant below — the namespace condition
+    // is what actually scopes it.
+    streamHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["cloudwatch:PutMetricData"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: { "cloudwatch:namespace": "MemeDay" },
+        },
       })
     );
 
