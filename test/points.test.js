@@ -164,8 +164,32 @@ function streamEvent(eventName, newImage, oldImage) {
 }
 
 async function cleanup(dynamo, DeleteCommand, TABLE, keys) {
-  for (const key of keys) {
-    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: key })).catch(() => {});
+  const { GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const deleteAll = async () => {
+    for (const key of keys) {
+      await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: key })).catch(() => {});
+    }
+  };
+  await deleteAll();
+
+  // Streams on the dev table also feed the real, deployed StreamHandler, not
+  // just the in-process handler() this file calls directly, so a direct
+  // PutCommand write of an active MEME# row above (or a LIKE#/COMMENT# one)
+  // triggers a second, asynchronous award from that live Lambda. It can land
+  // after the delete pass above already ran, recreating LB#/POINTS# rows
+  // this function already thought it cleaned up. Poll for and re-delete
+  // anything that reappears within the Streams propagation window.
+  for (let i = 0; i < 4; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    let reappeared = false;
+    for (const key of keys) {
+      const res = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key })).catch(() => null);
+      if (res?.Item) {
+        reappeared = true;
+        await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: key })).catch(() => {});
+      }
+    }
+    if (!reappeared) return;
   }
 }
 
@@ -181,10 +205,16 @@ test("points: a duplicate/replayed like award only awards once", async (t) => {
   const likerId = `test_pts_replay_liker_${Date.now()}`;
   const now = new Date().toISOString();
 
+  // This PutCommand below writes a real INSERT to the live dev table, which
+  // the actually-deployed StreamHandler (subscribed to this table's Streams,
+  // not just the in-process handler() this file calls) also reacts to,
+  // awarding creatorId an UPLOAD independently of anything this test
+  // simulates, so that award's ledger row needs cleanup too.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(likerId, now),
     ...periodTotalKeys(creatorId, now),
   ];
@@ -225,12 +255,23 @@ test("points: a self-like and a self-comment award nothing", async (t) => {
   const commentId = `test_pts_self_comment_${Date.now()}`;
   const now = new Date().toISOString();
 
-  const keys = [
-    { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+  const selfAwardKeys = [
     { PK: `POINTS#${creatorId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${creatorId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+  ];
+  // This direct PutCommand also triggers the real deployed StreamHandler
+  // (subscribed to the live table's Streams) to award creatorId an UPLOAD,
+  // a legitimate award, unrelated to the self-engagement this test checks,
+  // but one that lands LB#DAY/WEEK/ALLTIME rows this test still has to clean
+  // up, so it's in `keys` (cleanup) but deliberately left out of
+  // `selfAwardKeys` (the self-engagement assertions below).
+  const keys = [
+    { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+    ...selfAwardKeys,
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    ...periodTotalKeys(creatorId, now),
   ];
 
   await dynamo.send(
@@ -248,7 +289,7 @@ test("points: a self-like and a self-comment award nothing", async (t) => {
       () => {}
     );
 
-    for (const key of keys.slice(1)) {
+    for (const key of selfAwardKeys) {
       const result = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
       assert.strictEqual(result.Item, undefined, `no award for self-engagement at ${key.SK}`);
     }
@@ -272,12 +313,15 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
   const commentId2 = `test_pts_c2_${Date.now()}`;
   const now = new Date().toISOString();
 
+  // This direct PutCommand also triggers the real deployed StreamHandler to
+  // award creatorId an UPLOAD independently of the comment awards below.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${shortCommentId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId1}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId2}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(commenterId, now),
     ...periodTotalKeys(creatorId, now),
   ];
@@ -349,10 +393,14 @@ test("points: a daily cap already at its ceiling blocks one more award of that a
   // GIVE_LIKE: 1 point/award, cap 20 pts/day — seed the day counter already
   // at the ceiling so the next award is rejected outright, not truncated.
   const dayCounterKey = { PK: `POINTS#${likerId}`, SK: `DAY#${dayKey}#GIVE_LIKE` };
+  // This direct PutCommand also triggers the real deployed StreamHandler to
+  // award creatorId an UPLOAD, unrelated to the GIVE_LIKE cap under test.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    ...periodTotalKeys(creatorId, nowIso),
   ];
 
   await dynamo.send(
@@ -518,10 +566,14 @@ test("points: attachReferrer — within the window succeeds; after the window, a
   const referredId = `test_attach_referred_${Date.now()}`;
   const staleReferredId = `test_attach_stale_${Date.now()}`;
 
+  // attachReferrer's UpdateCommand writes referredBy live, which the real
+  // deployed StreamHandler also reacts to (referredBy appearing on a MODIFY),
+  // writing a REFERREDBY marker for referredId independently of this test.
   const keys = [
     { PK: `USER#${referrerId}`, SK: `USER#${referrerId}` },
     { PK: `USER#${referredId}`, SK: `USER#${referredId}` },
     { PK: `USER#${staleReferredId}`, SK: `USER#${staleReferredId}` },
+    { PK: `POINTS#${referredId}`, SK: "REFERREDBY" },
   ];
 
   await dynamo.send(
@@ -702,12 +754,16 @@ test("points: RECEIVE_LIKE's daily cap (100 pts/day) blocks one more", async (t)
   const dayKey = now.slice(0, 10);
 
   const dayCounterKey = { PK: `POINTS#${creatorId}`, SK: `DAY#${dayKey}#RECEIVE_LIKE` };
+  // The meme PutCommand below also triggers the real deployed StreamHandler
+  // to award creatorId an UPLOAD, unrelated to the RECEIVE_LIKE cap under test.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     ...periodTotalKeys(likerId, now),
+    ...periodTotalKeys(creatorId, now),
   ];
 
   await dynamo.send(
@@ -747,11 +803,14 @@ test("points: GIVE_COMMENT's daily cap (10/day) blocks an 11th", async (t) => {
   const dayKey = now.slice(0, 10);
 
   const dayCounterKey = { PK: `POINTS#${commenterId}`, SK: `DAY#${dayKey}#GIVE_COMMENT` };
+  // The meme PutCommand below also triggers the real deployed StreamHandler
+  // to award creatorId an UPLOAD, unrelated to the GIVE_COMMENT cap under test.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, now),
   ];
 
@@ -796,12 +855,16 @@ test("points: RECEIVE_COMMENT's daily cap (50 pts/day) blocks one more", async (
   const dayKey = now.slice(0, 10);
 
   const dayCounterKey = { PK: `POINTS#${creatorId}`, SK: `DAY#${dayKey}#RECEIVE_COMMENT` };
+  // The meme PutCommand below also triggers the real deployed StreamHandler
+  // to award creatorId an UPLOAD, unrelated to the RECEIVE_COMMENT cap under test.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     ...periodTotalKeys(commenterId, now),
+    ...periodTotalKeys(creatorId, now),
   ];
 
   await dynamo.send(
@@ -981,10 +1044,13 @@ test("points: a TransactionConflict cancellation is retried and the award still 
   const likerId = `test_pts_conflict_retry_liker_${Date.now()}`;
   const now = new Date().toISOString();
 
+  // This direct PutCommand also triggers the real deployed StreamHandler to
+  // award creatorId an UPLOAD, unrelated to the GIVE_LIKE conflict under test.
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(likerId, now),
     ...periodTotalKeys(creatorId, now),
   ];
@@ -1052,7 +1118,16 @@ test("points: a persistent TransactionConflict exhausts retries and emits Points
   const likerId = `test_pts_conflict_giveup_liker_${Date.now()}`;
   const now = new Date().toISOString();
 
-  const keys = [{ PK: `MEME#${memeId}`, SK: `MEME#${memeId}` }];
+  // This direct PutCommand also triggers the real deployed StreamHandler
+  // (with its own, unmocked TransactWriteItems) to award creatorId an
+  // UPLOAD, unrelated to the always-failing GIVE_LIKE/RECEIVE_LIKE transact
+  // this test mocks below. docClient here is this file's in-process
+  // handler's client, not the live Lambda's.
+  const keys = [
+    { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    ...periodTotalKeys(creatorId, now),
+  ];
 
   await dynamo.send(
     new PutCommand({
@@ -1102,6 +1177,55 @@ test("points: a persistent TransactionConflict exhausts retries and emits Points
     docClient.send = originalSend;
     cloudwatch.send = originalCwSend;
     console.error = originalConsoleError;
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+// ── Leaderboard read path excludes rows with no USER# record ───────────────
+// app/leaderboard/page.tsx's buildPointsRows calls lib/db.ts's
+// toPointsLeaderboardRows to do this filtering; that function is tested
+// directly here (not through page.tsx) because page.tsx also imports
+// LeaderboardClient.tsx, a "use client" component, and this project's test
+// runner (`node --test`, native TS type-stripping only) can't parse JSX, so
+// nothing in page.tsx is importable from a test.
+
+test("points: a leaderboard entry with no USER# record is excluded, not shown with a truncated userId", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { PutCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { getPointsLeaderboard, getUsersByIds, toPointsLeaderboardRows } = await import("../lib/db.ts");
+
+  const orphanId = `test_pts_orphan_${Date.now()}`;
+  const keys = [{ PK: "LB#ALLTIME", SK: `USER#${orphanId}` }];
+
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: {
+        PK: "LB#ALLTIME",
+        SK: `USER#${orphanId}`,
+        GSI3PK: "LB#ALLTIME",
+        GSI3SK: `${padPoints(500)}#${orphanId}`,
+        userId: orphanId,
+        points: 500,
+      },
+    })
+  );
+
+  try {
+    const entries = await getPointsLeaderboard("all");
+    assert.ok(entries.some((e) => e.userId === orphanId), "the orphan row is present in the raw leaderboard read");
+
+    const users = await getUsersByIds(entries.map((e) => e.userId));
+    assert.ok(!users.has(orphanId), "the orphan userId genuinely has no USER# record");
+
+    const rows = toPointsLeaderboardRows(entries, users);
+    assert.ok(
+      rows.every((r) => r.userId !== orphanId),
+      "a leaderboard row with no USER# record is dropped from what the page renders"
+    );
+  } finally {
     await cleanup(dynamo, DeleteCommand, TABLE, keys);
   }
 });

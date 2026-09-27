@@ -121,17 +121,29 @@ function parseUser(item: Record<string, unknown>): DbUser {
 export async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
   const unique = [...new Set(userIds)];
   if (unique.length === 0) return new Map();
-  const result = await dynamo.send(
-    new BatchGetCommand({
-      RequestItems: {
-        [TABLE]: { Keys: unique.map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` })) },
-      },
-    })
-  );
+
   const map = new Map<string, DbUser>();
-  for (const item of result.Responses?.[TABLE] ?? []) {
-    const user = parseUser(item as Record<string, unknown>);
-    map.set(user.userId, user);
+  // BatchGetItem caps out at 100 keys and can return a partial result under
+  // UnprocessedKeys (throttling), so a caller passing more than 100 distinct
+  // ids (KAN-101's leaderboard/creator batches) still needs every user back.
+  for (let i = 0; i < unique.length; i += 100) {
+    let keys: { PK: string; SK: string }[] = unique
+      .slice(i, i + 100)
+      .map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` }));
+    while (keys.length > 0) {
+      const result = await dynamo.send(
+        new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
+      );
+      for (const item of result.Responses?.[TABLE] ?? []) {
+        const user = parseUser(item as Record<string, unknown>);
+        map.set(user.userId, user);
+      }
+      const unprocessed = result.UnprocessedKeys?.[TABLE]?.Keys as
+        | { PK: string; SK: string }[]
+        | undefined;
+      keys = unprocessed ?? [];
+      if (keys.length > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   return map;
 }
@@ -1376,6 +1388,32 @@ export async function getPointsLeaderboard(period: PointsPeriod): Promise<Points
     userId: item.userId as string,
     points: (item.points as number) ?? 0,
   }));
+}
+
+export interface PointsLeaderboardRow {
+  userId: string;
+  displayName: string;
+  points: number;
+}
+
+// Real users only (KAN-101 follow-up). A stray ledger row from a deleted
+// account or a test run has no USER# record, and must not render with a
+// truncated userId as a fake display name. Pulled out of
+// app/leaderboard/page.tsx so it's unit-testable: that file also imports
+// LeaderboardClient.tsx (a "use client" component), which node --test's
+// native TS loader can't parse, so nothing in page.tsx can be imported
+// directly by a test.
+export function toPointsLeaderboardRows(
+  entries: PointsLeaderboardEntry[],
+  users: Map<string, DbUser>
+): PointsLeaderboardRow[] {
+  return entries
+    .filter((e) => users.has(e.userId))
+    .map((e) => ({
+      userId: e.userId,
+      displayName: users.get(e.userId)!.displayName ?? e.userId.slice(0, 8),
+      points: e.points,
+    }));
 }
 
 export interface UserPointsTotals {
