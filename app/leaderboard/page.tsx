@@ -1,9 +1,8 @@
 import {
   getLeaderboardCounts,
   getMemesByCreator,
-  getPointsLeaderboard,
+  getPointsLeaderboardRows,
   getUsersByIds,
-  toPointsLeaderboardRows,
   type PointsPeriod,
 } from "@/lib/db";
 import { MOCK_CREATORS, MOCK_MEMES, creatorFromDbUser } from "@/lib/data";
@@ -15,9 +14,7 @@ import { LeaderboardClient, type PointsRow } from "./LeaderboardClient";
 // Volume/Meme Count tabs above.
 async function buildPointsRows(period: PointsPeriod): Promise<PointsRow[]> {
   try {
-    const entries = await getPointsLeaderboard(period);
-    const users = await getUsersByIds(entries.map((e) => e.userId));
-    return toPointsLeaderboardRows(entries, users);
+    return await getPointsLeaderboardRows(period);
   } catch {
     return [];
   }

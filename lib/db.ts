@@ -1434,6 +1434,52 @@ export function toPointsLeaderboardRows(
     }));
 }
 
+const POINTS_LEADERBOARD_PAGE_SIZE = 50;
+const POINTS_LEADERBOARD_MAX_PAGES = 5;
+
+// Pages through GSI3 for a period, looking up USER# records per page and
+// keeping only real users, until it has 50 real rows, the index is
+// exhausted, or it has read POINTS_LEADERBOARD_MAX_PAGES pages (KAN-101).
+// getPointsLeaderboard's flat Limit: 50 read orphan test/deleted-account
+// rows off the top of GSI3 and filtered them out afterward, so on
+// MemeDayDev's 150+ orphan rows every real user was cut off before the
+// filter ever ran. The page cap exists to bound latency if orphan rows ever
+// pile up again; beyond 5 pages the orphan cleanup is the fix, not more
+// reads.
+export async function getPointsLeaderboardRows(
+  period: PointsPeriod
+): Promise<PointsLeaderboardRow[]> {
+  noStore();
+  const rows: PointsLeaderboardRow[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+
+  for (let page = 0; page < POINTS_LEADERBOARD_MAX_PAGES; page++) {
+    const result = await dynamo.send(
+      new QueryCommand({
+        TableName: TABLE,
+        IndexName: "GSI3",
+        KeyConditionExpression: "GSI3PK = :pk",
+        ExpressionAttributeValues: { ":pk": pointsPeriodKey(period) },
+        ScanIndexForward: false,
+        Limit: POINTS_LEADERBOARD_PAGE_SIZE,
+        ExclusiveStartKey: exclusiveStartKey,
+      })
+    );
+
+    const entries: PointsLeaderboardEntry[] = (result.Items ?? []).map((item) => ({
+      userId: item.userId as string,
+      points: (item.points as number) ?? 0,
+    }));
+    const users = await getUsersByIds(entries.map((e) => e.userId));
+    rows.push(...toPointsLeaderboardRows(entries, users));
+
+    exclusiveStartKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+    if (rows.length >= POINTS_LEADERBOARD_PAGE_SIZE || !exclusiveStartKey) break;
+  }
+
+  return rows.slice(0, POINTS_LEADERBOARD_PAGE_SIZE);
+}
+
 export interface UserPointsTotals {
   weekly: number;
   allTime: number;
