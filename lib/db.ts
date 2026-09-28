@@ -271,39 +271,91 @@ function feedCutoff(range: Tab): string | undefined {
   return undefined;
 }
 
+const FEED_PAGE_MAX_QUERIES = 5;
+
 // Paginated, range-filtered GSI3 read for /browse (KAN-86). Unlike getMemes,
 // this filters server-side on GSI3SK (createdAt) rather than pulling the
 // whole feed and filtering in the client. Page size is fixed at 24, well
 // under BatchGetCommand's 100-key limit.
+//
+// Same orphan-row problem as KAN-101's points leaderboard: a FEED#GLOBAL row
+// on GSI3 can outlive its MEME# item (test data, a race during creation), so
+// a flat Limit: FEED_PAGE_SIZE query can hydrate to almost nothing even
+// though real memes exist further down the index. This keeps querying GSI3
+// until it has FEED_PAGE_SIZE hydrated memes, the index is exhausted, or it
+// has made FEED_PAGE_MAX_QUERIES queries. The cap bounds latency if orphan
+// rows pile up; beyond it, cleaning up the orphan rows is the real fix, not
+// more reads.
 export async function getFeedPage(
   range: Tab,
   cursor?: string
 ): Promise<{ memes: DbMeme[]; nextCursor: string | null }> {
   noStore();
   const cutoff = feedCutoff(range);
-  const exclusiveStartKey = decodeFeedCursor(cursor);
+  let exclusiveStartKey = decodeFeedCursor(cursor);
 
-  const values: Record<string, unknown> = { ":pk": "FEED#GLOBAL" };
-  if (cutoff !== undefined) values[":cutoff"] = cutoff;
+  const memes: DbMeme[] = [];
+  let nextCursor: string | null = null;
+  let exhausted = false;
 
-  const feedResult = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE,
-      IndexName: "GSI3",
-      KeyConditionExpression:
-        cutoff !== undefined ? "GSI3PK = :pk AND GSI3SK >= :cutoff" : "GSI3PK = :pk",
-      ExpressionAttributeValues: values,
-      ScanIndexForward: false,
-      Limit: FEED_PAGE_SIZE,
-      ExclusiveStartKey: exclusiveStartKey,
-    })
-  );
+  for (let queryCount = 0; queryCount < FEED_PAGE_MAX_QUERIES; queryCount++) {
+    const values: Record<string, unknown> = { ":pk": "FEED#GLOBAL" };
+    if (cutoff !== undefined) values[":cutoff"] = cutoff;
 
-  const memes = await hydrateFeedItems(feedResult.Items ?? []);
-  const nextCursor = feedResult.LastEvaluatedKey
-    ? encodeFeedCursor(feedResult.LastEvaluatedKey)
-    : null;
-  return { memes, nextCursor };
+    const feedResult = await dynamo.send(
+      new QueryCommand({
+        TableName: TABLE,
+        IndexName: "GSI3",
+        KeyConditionExpression:
+          cutoff !== undefined ? "GSI3PK = :pk AND GSI3SK >= :cutoff" : "GSI3PK = :pk",
+        ExpressionAttributeValues: values,
+        ScanIndexForward: false,
+        Limit: FEED_PAGE_SIZE,
+        ExclusiveStartKey: exclusiveStartKey,
+      })
+    );
+
+    const items = feedResult.Items ?? [];
+    const hydratedById = new Map(
+      (await hydrateFeedItems(items)).map((meme) => [meme.id, meme])
+    );
+
+    // Walk the raw feed rows (already newest-first from the query) instead of
+    // the hydrated list: if this page fills up mid-batch, the stopping row's
+    // own key attributes become the cursor, so a page boundary can land
+    // between two feed rows in the same batch without skipping or repeating
+    // either one on the next call.
+    let stoppedEarly = false;
+    for (const item of items) {
+      const meme = hydratedById.get(item.memeId as string);
+      if (meme) memes.push(meme);
+      if (memes.length >= FEED_PAGE_SIZE) {
+        nextCursor = encodeFeedCursor({
+          PK: item.PK,
+          SK: item.SK,
+          GSI3PK: item.GSI3PK,
+          GSI3SK: item.GSI3SK,
+        });
+        stoppedEarly = true;
+        break;
+      }
+    }
+    if (stoppedEarly) break;
+
+    exclusiveStartKey = feedResult.LastEvaluatedKey as
+      | Record<string, unknown>
+      | undefined;
+    if (!exclusiveStartKey) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  if (!exhausted && nextCursor === null && exclusiveStartKey) {
+    nextCursor = encodeFeedCursor(exclusiveStartKey);
+  }
+
+  return { memes: memes.slice(0, FEED_PAGE_SIZE), nextCursor };
 }
 
 // Query FEED#GLOBAL base table (score desc = highest score first), GetItem for full details.
