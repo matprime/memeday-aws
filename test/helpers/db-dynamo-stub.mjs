@@ -13,6 +13,7 @@ export const state = {
   batchCallCount: 0,
   maxKeysPerCall: 0,
   splitFirstCall: false,
+  queryCallCount: 0,
 };
 
 function itemKey(pk, sk) {
@@ -25,6 +26,7 @@ export function resetStub() {
   state.batchCallCount = 0;
   state.maxKeysPerCall = 0;
   state.splitFirstCall = false;
+  state.queryCallCount = 0;
 }
 
 export function seedItem(pk, sk, item) {
@@ -63,7 +65,32 @@ export const dynamo = {
       return result;
     }
     if (command instanceof QueryCommand) {
-      return { Items: state.feedItems };
+      state.queryCallCount += 1;
+      const input = command.input;
+      const pk = input.ExpressionAttributeValues?.[":pk"];
+      let items = state.feedItems.filter((i) => i.GSI3PK === pk);
+
+      const forward = input.ScanIndexForward !== false;
+      items = [...items].sort((a, b) =>
+        forward
+          ? a.GSI3SK < b.GSI3SK ? -1 : 1
+          : a.GSI3SK < b.GSI3SK ? 1 : -1
+      );
+
+      if (input.ExclusiveStartKey) {
+        const idx = items.findIndex((i) => i.GSI3SK === input.ExclusiveStartKey.GSI3SK);
+        items = idx >= 0 ? items.slice(idx + 1) : items;
+      }
+
+      let LastEvaluatedKey;
+      if (input.Limit && items.length > input.Limit) {
+        LastEvaluatedKey = { GSI3PK: pk, GSI3SK: items[input.Limit - 1].GSI3SK };
+        items = items.slice(0, input.Limit);
+      }
+
+      const result = { Items: items };
+      if (LastEvaluatedKey) result.LastEvaluatedKey = LastEvaluatedKey;
+      return result;
     }
     throw new Error(`db-dynamo-stub: unhandled command ${command.constructor.name}`);
   },
