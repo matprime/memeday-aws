@@ -259,7 +259,7 @@ test("points: a self-like and a self-comment award nothing", async (t) => {
     { PK: `POINTS#${creatorId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${creatorId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${creatorId}` },
   ];
   // This direct PutCommand also triggers the real deployed StreamHandler
   // (subscribed to the live table's Streams) to award creatorId an UPLOAD,
@@ -298,7 +298,7 @@ test("points: a self-like and a self-comment award nothing", async (t) => {
   }
 });
 
-test("points: a comment under 10 chars awards nothing; a second qualifying comment on the same meme does not re-award give_comment but does award receive_comment again", async (t) => {
+test("points: a comment under 10 chars awards nothing; a second qualifying comment by the same commenter on the same meme does not re-award give_comment or receive_comment", async (t) => {
   if (skipIfNoCredentials(t)) return;
 
   const { dynamo, TABLE } = await import("../lib/dynamo.ts");
@@ -318,9 +318,7 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${shortCommentId}` },
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId1}` },
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId2}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(commenterId, now),
     ...periodTotalKeys(creatorId, now),
@@ -341,7 +339,7 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
       () => {}
     );
     const shortReceive = await dynamo.send(
-      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${shortCommentId}` } })
+      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` } })
     );
     assert.strictEqual(shortReceive.Item, undefined, "a comment under 10 chars awards nothing");
 
@@ -363,14 +361,11 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
     assert.ok(giveAward.Item, "give_comment awarded once");
     assert.strictEqual(giveAward.Item.sourceId, memeId, "give_comment award recorded against the meme, not a specific comment");
 
-    const receive1 = await dynamo.send(
-      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId1}` } })
+    const receive = await dynamo.send(
+      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` } })
     );
-    const receive2 = await dynamo.send(
-      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId2}` } })
-    );
-    assert.ok(receive1.Item, "receive_comment awarded for the first comment");
-    assert.ok(receive2.Item, "receive_comment awarded again for the second comment — it isn't per-meme deduped");
+    assert.ok(receive.Item, "receive_comment awarded once for the first qualifying comment");
+    assert.strictEqual(receive.Item.points, 1, "a second qualifying comment by the same commenter on the same meme gives the creator nothing more");
   } finally {
     await cleanup(dynamo, DeleteCommand, TABLE, keys);
   }
@@ -809,7 +804,7 @@ test("points: GIVE_COMMENT's daily cap (10/day) blocks an 11th", async (t) => {
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, now),
   ];
@@ -860,7 +855,7 @@ test("points: RECEIVE_COMMENT's daily cap (50 pts/day) blocks one more", async (
   const keys = [
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
-    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` },
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     ...periodTotalKeys(commenterId, now),
@@ -885,7 +880,7 @@ test("points: RECEIVE_COMMENT's daily cap (50 pts/day) blocks one more", async (
     );
 
     const award = await dynamo.send(
-      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${commentId}` } })
+      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` } })
     );
     assert.strictEqual(award.Item, undefined, "receive_comment earns nothing once the day's 50 points are used");
   } finally {

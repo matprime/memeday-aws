@@ -463,13 +463,11 @@ async function handleLikeAward(memeId: string, likerUserId: string, likeCreatedA
 // COMMENT# items carry the full comment (see lib/db.ts addComment). GIVE_COMMENT's
 // award SK is keyed by memeId only (not commentId) — PK is already the commenter,
 // so the conditional Put in awardPoints structurally enforces "one award per meme
-// per user" without a separate check here. RECEIVE_COMMENT is keyed by commentId,
-// so every qualifying comment earns its receiver points again, capped only by the
-// daily points cap.
+// per user" without a separate check here. RECEIVE_COMMENT is keyed by memeId+commenterId
+// for the same reason: one award per meme per commenter, not per comment.
 async function handleCommentAward(comment: Record<string, unknown>): Promise<void> {
   const memeId = comment.memeId as string;
   const commenterId = comment.userId as string;
-  const commentId = comment.commentId as string;
   const body = (comment.body as string | undefined) ?? "";
   const createdAt = comment.createdAt as string;
 
@@ -500,11 +498,11 @@ async function handleCommentAward(comment: Record<string, unknown>): Promise<voi
       awardPoints({
         earnerId: creatorId,
         action: "RECEIVE_COMMENT",
-        awardSk: `AWARD#RECEIVE_COMMENT#${commentId}`,
-        sourceId: commentId,
+        awardSk: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}`,
+        sourceId: memeId,
         createdAt,
       }),
-    `receive_comment for ${creatorId} on ${commentId}`
+    `receive_comment for ${creatorId} on ${memeId}`
   );
 }
 
