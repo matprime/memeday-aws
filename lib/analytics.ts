@@ -20,6 +20,7 @@ export const EVENTS = {
   bagsLaunchStarted: "bags_launch_started",
   bagsVerifyStarted: "bags_verify_started",
   bagsVerifyConfirmed: "bags_verify_confirmed",
+  pointsLeaderboardViewed: "points_leaderboard_viewed",
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

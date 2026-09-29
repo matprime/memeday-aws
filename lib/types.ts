@@ -71,6 +71,10 @@ export interface DbUser {
   creatorTokenAddr?: string;
   creatorTokenSymbol?: string;
   credScore: number;
+  // Cognito sub of the user who referred this signup (KAN-101), set at most
+  // once by POST /api/users within REFERRAL_ATTACH_WINDOW_HOURS of createdAt.
+  // Absent means either no referral or the window had already closed.
+  referredBy?: string;
   createdAt: string;
 }
 

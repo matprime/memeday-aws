@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import { NFT_ORPHANED_UPLOAD_RETENTION_SECONDS } from "./nft-config";
 import type { PartnerAttribution } from "./bags-server";
+import { REFERRAL_ATTACH_WINDOW_HOURS, utcDateKey, isoWeekKey } from "./points-config";
 
 const PENDING_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 
@@ -117,20 +118,60 @@ function parseUser(item: Record<string, unknown>): DbUser {
 // current walletVerifiedAt without a read per meme: one extra BatchGet for
 // the distinct creators in a page, alongside the BatchGet they already do for
 // the meme rows themselves.
-async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
+// BatchGetItem rejects more than 100 keys per call and, separately, can
+// return only some of a request's keys under throttling (UnprocessedKeys),
+// so any caller with an unbounded key list needs both chunking and a retry
+// loop, not just one or the other. getUsersByIds below predates this and
+// keeps its own copy of the same logic; this is for callers added after it
+// (hydrateFeedItems, getReportedMemeIds) that need the identical guarantee
+// over MEME# and REPORT# keys instead of USER# keys.
+async function batchGetAll(
+  keys: { PK: string; SK: string }[]
+): Promise<Record<string, unknown>[]> {
+  const responses: Record<string, unknown>[] = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    let chunk = keys.slice(i, i + 100);
+    while (chunk.length > 0) {
+      const result = await dynamo.send(
+        new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: chunk } } })
+      );
+      responses.push(...(result.Responses?.[TABLE] ?? []));
+      const unprocessed = result.UnprocessedKeys?.[TABLE]?.Keys as
+        | { PK: string; SK: string }[]
+        | undefined;
+      chunk = unprocessed ?? [];
+      if (chunk.length > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  return responses;
+}
+
+export async function getUsersByIds(userIds: string[]): Promise<Map<string, DbUser>> {
   const unique = [...new Set(userIds)];
   if (unique.length === 0) return new Map();
-  const result = await dynamo.send(
-    new BatchGetCommand({
-      RequestItems: {
-        [TABLE]: { Keys: unique.map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` })) },
-      },
-    })
-  );
+
   const map = new Map<string, DbUser>();
-  for (const item of result.Responses?.[TABLE] ?? []) {
-    const user = parseUser(item as Record<string, unknown>);
-    map.set(user.userId, user);
+  // BatchGetItem caps out at 100 keys and can return a partial result under
+  // UnprocessedKeys (throttling), so a caller passing more than 100 distinct
+  // ids (KAN-101's leaderboard/creator batches) still needs every user back.
+  for (let i = 0; i < unique.length; i += 100) {
+    let keys: { PK: string; SK: string }[] = unique
+      .slice(i, i + 100)
+      .map((id) => ({ PK: `USER#${id}`, SK: `USER#${id}` }));
+    while (keys.length > 0) {
+      const result = await dynamo.send(
+        new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
+      );
+      for (const item of result.Responses?.[TABLE] ?? []) {
+        const user = parseUser(item as Record<string, unknown>);
+        map.set(user.userId, user);
+      }
+      const unprocessed = result.UnprocessedKeys?.[TABLE]?.Keys as
+        | { PK: string; SK: string }[]
+        | undefined;
+      keys = unprocessed ?? [];
+      if (keys.length > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   return map;
 }
@@ -160,10 +201,8 @@ async function hydrateFeedItems(
     PK: `MEME#${item.memeId as string}`,
     SK: `MEME#${item.memeId as string}`,
   }));
-  const batchResult = await dynamo.send(
-    new BatchGetCommand({ RequestItems: { [TABLE]: { Keys: keys } } })
-  );
-  const memes = (batchResult.Responses?.[TABLE] ?? [])
+  const responses = await batchGetAll(keys);
+  const memes = responses
     .map((item) => parseMeme(item as Record<string, unknown>))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
@@ -232,39 +271,91 @@ function feedCutoff(range: Tab): string | undefined {
   return undefined;
 }
 
+const FEED_PAGE_MAX_QUERIES = 5;
+
 // Paginated, range-filtered GSI3 read for /browse (KAN-86). Unlike getMemes,
 // this filters server-side on GSI3SK (createdAt) rather than pulling the
 // whole feed and filtering in the client. Page size is fixed at 24, well
 // under BatchGetCommand's 100-key limit.
+//
+// Same orphan-row problem as KAN-101's points leaderboard: a FEED#GLOBAL row
+// on GSI3 can outlive its MEME# item (test data, a race during creation), so
+// a flat Limit: FEED_PAGE_SIZE query can hydrate to almost nothing even
+// though real memes exist further down the index. This keeps querying GSI3
+// until it has FEED_PAGE_SIZE hydrated memes, the index is exhausted, or it
+// has made FEED_PAGE_MAX_QUERIES queries. The cap bounds latency if orphan
+// rows pile up; beyond it, cleaning up the orphan rows is the real fix, not
+// more reads.
 export async function getFeedPage(
   range: Tab,
   cursor?: string
 ): Promise<{ memes: DbMeme[]; nextCursor: string | null }> {
   noStore();
   const cutoff = feedCutoff(range);
-  const exclusiveStartKey = decodeFeedCursor(cursor);
+  let exclusiveStartKey = decodeFeedCursor(cursor);
 
-  const values: Record<string, unknown> = { ":pk": "FEED#GLOBAL" };
-  if (cutoff !== undefined) values[":cutoff"] = cutoff;
+  const memes: DbMeme[] = [];
+  let nextCursor: string | null = null;
+  let exhausted = false;
 
-  const feedResult = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE,
-      IndexName: "GSI3",
-      KeyConditionExpression:
-        cutoff !== undefined ? "GSI3PK = :pk AND GSI3SK >= :cutoff" : "GSI3PK = :pk",
-      ExpressionAttributeValues: values,
-      ScanIndexForward: false,
-      Limit: FEED_PAGE_SIZE,
-      ExclusiveStartKey: exclusiveStartKey,
-    })
-  );
+  for (let queryCount = 0; queryCount < FEED_PAGE_MAX_QUERIES; queryCount++) {
+    const values: Record<string, unknown> = { ":pk": "FEED#GLOBAL" };
+    if (cutoff !== undefined) values[":cutoff"] = cutoff;
 
-  const memes = await hydrateFeedItems(feedResult.Items ?? []);
-  const nextCursor = feedResult.LastEvaluatedKey
-    ? encodeFeedCursor(feedResult.LastEvaluatedKey)
-    : null;
-  return { memes, nextCursor };
+    const feedResult = await dynamo.send(
+      new QueryCommand({
+        TableName: TABLE,
+        IndexName: "GSI3",
+        KeyConditionExpression:
+          cutoff !== undefined ? "GSI3PK = :pk AND GSI3SK >= :cutoff" : "GSI3PK = :pk",
+        ExpressionAttributeValues: values,
+        ScanIndexForward: false,
+        Limit: FEED_PAGE_SIZE,
+        ExclusiveStartKey: exclusiveStartKey,
+      })
+    );
+
+    const items = feedResult.Items ?? [];
+    const hydratedById = new Map(
+      (await hydrateFeedItems(items)).map((meme) => [meme.id, meme])
+    );
+
+    // Walk the raw feed rows (already newest-first from the query) instead of
+    // the hydrated list: if this page fills up mid-batch, the stopping row's
+    // own key attributes become the cursor, so a page boundary can land
+    // between two feed rows in the same batch without skipping or repeating
+    // either one on the next call.
+    let stoppedEarly = false;
+    for (const item of items) {
+      const meme = hydratedById.get(item.memeId as string);
+      if (meme) memes.push(meme);
+      if (memes.length >= FEED_PAGE_SIZE) {
+        nextCursor = encodeFeedCursor({
+          PK: item.PK,
+          SK: item.SK,
+          GSI3PK: item.GSI3PK,
+          GSI3SK: item.GSI3SK,
+        });
+        stoppedEarly = true;
+        break;
+      }
+    }
+    if (stoppedEarly) break;
+
+    exclusiveStartKey = feedResult.LastEvaluatedKey as
+      | Record<string, unknown>
+      | undefined;
+    if (!exclusiveStartKey) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  if (!exhausted && nextCursor === null && exclusiveStartKey) {
+    nextCursor = encodeFeedCursor(exclusiveStartKey);
+  }
+
+  return { memes: memes.slice(0, FEED_PAGE_SIZE), nextCursor };
 }
 
 // Query FEED#GLOBAL base table (score desc = highest score first), GetItem for full details.
@@ -780,18 +871,10 @@ export async function getReportedMemeIds(
   memeIds: string[]
 ): Promise<string[]> {
   if (memeIds.length === 0) return [];
-  const batchResult = await dynamo.send(
-    new BatchGetCommand({
-      RequestItems: {
-        [TABLE]: {
-          Keys: memeIds.map((id) => ({ PK: `MEME#${id}`, SK: `REPORT#${identityHash}` })),
-        },
-      },
-    })
+  const responses = await batchGetAll(
+    memeIds.map((id) => ({ PK: `MEME#${id}`, SK: `REPORT#${identityHash}` }))
   );
-  return (batchResult.Responses?.[TABLE] ?? []).map(
-    (item) => (item.PK as string).slice("MEME#".length)
-  );
+  return responses.map((item) => (item.PK as string).slice("MEME#".length));
 }
 
 // Distinct reporters + reason/timestamps for a meme's REPORT# items, used by
@@ -1296,4 +1379,176 @@ export async function refreshMintNonce(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Points & leaderboard (KAN-101)
+// ---------------------------------------------------------------------------
+
+// Called from POST /api/users, after the profile upsert. A separate,
+// best-effort write so a bad/expired/self ref never fails the profile write
+// it rides along with — callers should catch and log, never surface this as
+// a request failure. Conditioned on the referred user's own createdAt so a
+// ?refBy sitting in localStorage past REFERRAL_ATTACH_WINDOW_HOURS can no
+// longer attach, and on attribute_not_exists(referredBy) so only the first
+// attempt ever wins. Returns false (not an error) for an unknown referrer, a
+// closed window, or an already-attached user.
+export async function attachReferrer(userId: string, referrerId: string): Promise<boolean> {
+  const referrer = await getUserById(referrerId);
+  if (!referrer) return false;
+
+  const cutoff = new Date(
+    Date.now() - REFERRAL_ATTACH_WINDOW_HOURS * 60 * 60 * 1000
+  ).toISOString();
+
+  try {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: `USER#${userId}`, SK: `USER#${userId}` },
+        UpdateExpression: "SET referredBy = :referrerId",
+        ConditionExpression: "attribute_not_exists(referredBy) AND createdAt > :cutoff",
+        ExpressionAttributeValues: { ":referrerId": referrerId, ":cutoff": cutoff },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string })?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export type PointsPeriod = "day" | "week" | "all";
+
+export interface PointsLeaderboardEntry {
+  userId: string;
+  points: number;
+}
+
+// GSI3 is already overloaded for FEED#GLOBAL (see ARCHITECTURE.md); LB#DAY#/
+// LB#WEEK#/LB#ALLTIME are three more GSI3PK values on the same index, written
+// by lambdas/stream-handler's awardPoints. "day" and "week" always mean the
+// current UTC day/ISO week — there's no way to browse a past period from
+// this reader today.
+function pointsPeriodKey(period: PointsPeriod): string {
+  const now = new Date();
+  if (period === "all") return "LB#ALLTIME";
+  if (period === "day") return `LB#DAY#${utcDateKey(now)}`;
+  return `LB#WEEK#${isoWeekKey(now)}`;
+}
+
+// Top 50 earners for a period, highest points first (KAN-101). GSI3SK is the
+// points value zero-padded to 15 digits, so a lexicographic ScanIndexForward:
+// false read is also a numeric descending read.
+export async function getPointsLeaderboard(period: PointsPeriod): Promise<PointsLeaderboardEntry[]> {
+  noStore();
+  const result = await dynamo.send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: "GSI3",
+      KeyConditionExpression: "GSI3PK = :pk",
+      ExpressionAttributeValues: { ":pk": pointsPeriodKey(period) },
+      ScanIndexForward: false,
+      Limit: 50,
+    })
+  );
+  return (result.Items ?? []).map((item) => ({
+    userId: item.userId as string,
+    points: (item.points as number) ?? 0,
+  }));
+}
+
+export interface PointsLeaderboardRow {
+  userId: string;
+  displayName: string;
+  points: number;
+}
+
+// Real users only (KAN-101 follow-up). A stray ledger row from a deleted
+// account or a test run has no USER# record, and must not render with a
+// truncated userId as a fake display name. Pulled out of
+// app/leaderboard/page.tsx so it's unit-testable: that file also imports
+// LeaderboardClient.tsx (a "use client" component), which node --test's
+// native TS loader can't parse, so nothing in page.tsx can be imported
+// directly by a test.
+export function toPointsLeaderboardRows(
+  entries: PointsLeaderboardEntry[],
+  users: Map<string, DbUser>
+): PointsLeaderboardRow[] {
+  return entries
+    .filter((e) => users.has(e.userId))
+    .map((e) => ({
+      userId: e.userId,
+      displayName: users.get(e.userId)!.displayName ?? e.userId.slice(0, 8),
+      points: e.points,
+    }));
+}
+
+const POINTS_LEADERBOARD_PAGE_SIZE = 50;
+const POINTS_LEADERBOARD_MAX_PAGES = 5;
+
+// Pages through GSI3 for a period, looking up USER# records per page and
+// keeping only real users, until it has 50 real rows, the index is
+// exhausted, or it has read POINTS_LEADERBOARD_MAX_PAGES pages (KAN-101).
+// getPointsLeaderboard's flat Limit: 50 read orphan test/deleted-account
+// rows off the top of GSI3 and filtered them out afterward, so on
+// MemeDayDev's 150+ orphan rows every real user was cut off before the
+// filter ever ran. The page cap exists to bound latency if orphan rows ever
+// pile up again; beyond 5 pages the orphan cleanup is the fix, not more
+// reads.
+export async function getPointsLeaderboardRows(
+  period: PointsPeriod
+): Promise<PointsLeaderboardRow[]> {
+  noStore();
+  const rows: PointsLeaderboardRow[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+
+  for (let page = 0; page < POINTS_LEADERBOARD_MAX_PAGES; page++) {
+    const result = await dynamo.send(
+      new QueryCommand({
+        TableName: TABLE,
+        IndexName: "GSI3",
+        KeyConditionExpression: "GSI3PK = :pk",
+        ExpressionAttributeValues: { ":pk": pointsPeriodKey(period) },
+        ScanIndexForward: false,
+        Limit: POINTS_LEADERBOARD_PAGE_SIZE,
+        ExclusiveStartKey: exclusiveStartKey,
+      })
+    );
+
+    const entries: PointsLeaderboardEntry[] = (result.Items ?? []).map((item) => ({
+      userId: item.userId as string,
+      points: (item.points as number) ?? 0,
+    }));
+    const users = await getUsersByIds(entries.map((e) => e.userId));
+    rows.push(...toPointsLeaderboardRows(entries, users));
+
+    exclusiveStartKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+    if (rows.length >= POINTS_LEADERBOARD_PAGE_SIZE || !exclusiveStartKey) break;
+  }
+
+  return rows.slice(0, POINTS_LEADERBOARD_PAGE_SIZE);
+}
+
+export interface UserPointsTotals {
+  weekly: number;
+  allTime: number;
+}
+
+// Backs GET /api/points/me. Two direct key reads, not a query — a caller
+// always wants their own current totals, never someone else's or a past
+// week's.
+export async function getUserPointsTotals(userId: string): Promise<UserPointsTotals> {
+  noStore();
+  const weekPk = `LB#WEEK#${isoWeekKey(new Date())}`;
+  const [weekResult, allTimeResult] = await Promise.all([
+    dynamo.send(new GetCommand({ TableName: TABLE, Key: { PK: weekPk, SK: `USER#${userId}` } })),
+    dynamo.send(new GetCommand({ TableName: TABLE, Key: { PK: "LB#ALLTIME", SK: `USER#${userId}` } })),
+  ]);
+  return {
+    weekly: (weekResult.Item?.points as number) ?? 0,
+    allTime: (allTimeResult.Item?.points as number) ?? 0,
+  };
 }

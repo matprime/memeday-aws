@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromRequest, getWalletAddressFromRequest } from "@/lib/cognito";
-import { upsertUser } from "@/lib/db";
+import { upsertUser, attachReferrer } from "@/lib/db";
+
+// A Cognito sub is a UUID. This is only a shape check — attachReferrer itself
+// confirms the referrer's USER# item actually exists before writing anything.
+function isPlausibleReferrerId(ref: unknown): ref is string {
+  return typeof ref === "string" && /^[a-zA-Z0-9-]{1,64}$/.test(ref);
+}
 
 export async function POST(req: Request) {
   const userId = await getUserIdFromRequest(req);
@@ -18,7 +24,7 @@ export async function POST(req: Request) {
     // either (KAN-75 comment 12056): same unproven-client-write bug as
     // walletAddr above. Ignored rather than erroring, so an older client
     // does not break.
-    const { email, displayName, authMethods, bagsProjectId } = body;
+    const { email, displayName, authMethods, bagsProjectId, ref } = body;
     const walletAddr = (await getWalletAddressFromRequest(req)) ?? undefined;
 
     const user = await upsertUser({
@@ -31,6 +37,18 @@ export async function POST(req: Request) {
       authMethods,
       bagsProjectId,
     });
+
+    // Referral attach (KAN-101): a separate, best-effort write after the
+    // profile upsert above, gated by its own conditions in lib/db.ts
+    // (attachReferrer) so a bad/expired/self ref never fails the profile
+    // write it rides along with.
+    if (isPlausibleReferrerId(ref) && ref !== userId) {
+      try {
+        await attachReferrer(userId, ref);
+      } catch (err) {
+        console.error("referral attach failed:", err);
+      }
+    }
 
     return NextResponse.json({ user });
   } catch (err) {

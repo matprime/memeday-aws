@@ -6,6 +6,7 @@ import { BagsToastContainer } from "@/components/BagsToast";
 import { WalletAuthSync } from "@/components/WalletAuthSync";
 import { SessionSync } from "@/components/SessionSync";
 import { AnalyticsInit } from "@/components/AnalyticsInit";
+import { ReferralCapture } from "@/components/ReferralCapture";
 import { Analytics } from "@vercel/analytics/next";
 import {
   SOLANA_NETWORK,
@@ -42,6 +43,7 @@ export default function RootLayout({
           <SessionSync />
           <WalletAuthSync />
           <AnalyticsInit />
+          <ReferralCapture />
           <Navbar />
           <main className="min-h-screen">{children}</main>
           <BagsToastContainer />

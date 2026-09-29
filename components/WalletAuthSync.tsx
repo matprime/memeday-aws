@@ -5,6 +5,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useAppStore } from "@/lib/store";
 import { signOut } from "@/lib/session";
 import { EVENTS, track } from "@/lib/analytics";
+import { getStoredReferrerId } from "@/components/ReferralCapture";
 
 // Triggers Cognito auth automatically whenever Phantom connects.
 // Clears the token when the wallet disconnects.
@@ -99,7 +100,10 @@ export function WalletAuthSync() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${accessToken}`,
             },
-            body: JSON.stringify({ walletAddr: walletAddress }),
+            body: JSON.stringify({
+              walletAddr: walletAddress,
+              ref: getStoredReferrerId() ?? undefined,
+            }),
           });
         }
       } catch (err) {

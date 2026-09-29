@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { InvestModal } from "@/components/InvestModal";
 import { Creator } from "@/lib/types";
 import {
@@ -11,25 +11,64 @@ import {
   Zap,
   Crown,
   ImageIcon,
+  Award,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { useDialogDismiss } from "@/lib/useDialogDismiss";
+import { useAppStore } from "@/lib/store";
+import { getAccessToken } from "@/lib/session";
+import { EVENTS, track } from "@/lib/analytics";
 
 type DisplayMeme = { id: string; imageUrl: string; caption: string; isNFT: boolean };
+
+export interface PointsRow {
+  userId: string;
+  displayName: string;
+  points: number;
+}
+
+type PointsPeriod = "day" | "week" | "all";
 
 interface Props {
   creatorsByVolume: Creator[];
   creatorsByMemes: Creator[];
   memesMap: Record<string, DisplayMeme[]>;
+  pointsRows: Record<PointsPeriod, PointsRow[]>;
 }
 
-export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap }: Props) {
-  const [tab, setTab] = useState<"volume" | "memes">("volume");
+export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap, pointsRows }: Props) {
+  const [tab, setTab] = useState<"volume" | "memes" | "points">("points");
+  const [pointsPeriod, setPointsPeriod] = useState<PointsPeriod>("week");
   const [investTarget, setInvestTarget] = useState<Creator | null>(null);
   const [selectedCreator, setSelectedCreator] = useState<Creator | null>(null);
+
+  const cognitoToken = useAppStore((s) => s.cognitoToken);
+  const [myPoints, setMyPoints] = useState<{ weekly: number; allTime: number } | null>(null);
+
+  useEffect(() => {
+    if (tab !== "points" || !cognitoToken || myPoints !== null) return;
+    (async () => {
+      const token = await getAccessToken();
+      if (!token) return;
+      try {
+        const res = await fetch("/api/points/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        setMyPoints(await res.json());
+      } catch {
+        // Best-effort — the leaderboard table itself doesn't depend on this.
+      }
+    })();
+  }, [tab, cognitoToken, myPoints]);
+
+  useEffect(() => {
+    if (tab !== "points") return;
+    track(EVENTS.pointsLeaderboardViewed, { period: pointsPeriod });
+  }, [tab, pointsPeriod]);
 
   const top3 = creatorsByVolume.slice(0, 3);
   const selectedMemes: DisplayMeme[] = selectedCreator ? (memesMap[selectedCreator.id] ?? []) : [];
@@ -53,6 +92,18 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
 
         {/* Tab switcher */}
         <div className="flex gap-2 mb-8 border-b border-border">
+          <button
+            onClick={() => setTab("points")}
+            className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
+              tab === "points"
+                ? "border-accent text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <Award size={14} /> Top by Points
+            </span>
+          </button>
           <button
             onClick={() => setTab("volume")}
             className={`pb-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
@@ -218,6 +269,89 @@ export function LeaderboardClient({ creatorsByVolume, creatorsByMemes, memesMap 
                 </div>
               ))}
             </div>
+          </>
+        )}
+
+        {tab === "points" && (
+          <>
+            <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+              <p className="text-gray-500 text-xs">
+                Ranked by points earned. Real accounts only — no demo creators.
+              </p>
+              <div className="flex gap-1 bg-surface border border-border rounded-lg p-1">
+                {(["day", "week", "all"] as const).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setPointsPeriod(period)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                      pointsPeriod === period
+                        ? "bg-accent text-white"
+                        : "text-gray-400 hover:text-gray-200"
+                    }`}
+                  >
+                    {period === "day" ? "Daily" : period === "week" ? "Weekly" : "All-time"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {cognitoToken && (
+              <div className="bg-surface border border-border rounded-2xl px-5 py-4 mb-6 flex items-center gap-6">
+                <Award size={20} className="text-accent-light shrink-0" />
+                <div className="flex gap-8">
+                  <div>
+                    <p className="text-xs text-gray-500">Your points this week</p>
+                    <p className="text-lg font-bold text-white">{myPoints?.weekly ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Your points all-time</p>
+                    <p className="text-lg font-bold text-white">{myPoints?.allTime ?? "—"}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+              <div className="grid grid-cols-4 gap-4 px-5 py-3 border-b border-border text-xs text-gray-500 font-semibold uppercase tracking-wider">
+                <span className="col-span-2">Creator</span>
+                <span className="flex items-center gap-1"><Award size={12} /> Points</span>
+                <span>Profile</span>
+              </div>
+
+              {pointsRows[pointsPeriod].length === 0 ? (
+                <p className="text-center text-gray-500 py-8 text-sm">
+                  No points earned yet for this period.
+                </p>
+              ) : (
+                pointsRows[pointsPeriod].map((row, i) => (
+                  <div
+                    key={row.userId}
+                    className="grid grid-cols-4 gap-4 px-5 py-4 border-b border-border/50 last:border-0 hover:bg-white/3 transition-colors items-center"
+                  >
+                    <div className="col-span-2 flex items-center gap-3">
+                      <span className="text-gray-600 font-bold w-5 text-sm">{i + 1}</span>
+                      <Link href={`/creator/${row.userId}`} className="flex items-center gap-3 group/creator">
+                        <CreatorAvatar seed={row.userId} alt={row.displayName} size={36} />
+                        <p className="text-sm font-semibold text-white group-hover/creator:text-accent-light transition-colors">
+                          {row.displayName}
+                        </p>
+                      </Link>
+                    </div>
+                    <span className="text-sm font-semibold text-white">{row.points.toLocaleString()}</span>
+                    <Link
+                      href={`/creator/${row.userId}`}
+                      className="flex items-center gap-1.5 text-xs font-bold text-accent-light bg-accent/10 hover:bg-accent/20 border border-accent/30 hover:border-accent/60 px-3 py-1.5 rounded-lg transition-all w-fit"
+                    >
+                      <Users size={11} /> View
+                    </Link>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <p className="text-center text-xs text-gray-600 mt-4">
+              Points have no cash value.
+            </p>
           </>
         )}
       </div>

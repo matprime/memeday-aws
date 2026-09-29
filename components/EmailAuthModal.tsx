@@ -5,6 +5,7 @@ import { X, Mail, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { EVENTS, track } from "@/lib/analytics";
 import { useDialogDismiss } from "@/lib/useDialogDismiss";
+import { getStoredReferrerId } from "@/components/ReferralCapture";
 
 interface Props {
   onClose: () => void;
@@ -59,7 +60,7 @@ export function EmailAuthModal({ onClose }: Props) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, ref: getStoredReferrerId() ?? undefined }),
     });
     addToast("Signed in!", "success");
     onClose();
