@@ -343,11 +343,22 @@ test(
 // immutable by the time confirm found out.
 test("metadata that is not a readable JSON document is rejected", async () => {
   const { verifyMetadataDocument } = await importTs("lib", "solana", "verify-mint.ts");
+  const http = require("node:http");
 
   // Serves HTML, not JSON — the shape every SSO/interstitial failure takes.
-  const html = await verifyMetadataDocument("https://example.com/", "https://example.test/a.png");
-  assert.strictEqual(html?.outcome, "rejected");
-  assert.strictEqual(html?.reason, "METADATA_NOT_JSON");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<html></html>");
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const html = await verifyMetadataDocument(`http://127.0.0.1:${port}/`, "https://example.test/a.png");
+    assert.strictEqual(html?.outcome, "rejected");
+    assert.strictEqual(html?.reason, "METADATA_NOT_JSON");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 
   const unresolvable = await verifyMetadataDocument(
     "https://$VERCEL_URL/api/nft-metadata/abc",
