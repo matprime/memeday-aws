@@ -99,6 +99,34 @@ async function emitPointsAwardFailureMetric(): Promise<void> {
   }
 }
 
+// KAN-67: counts awards that were deliberately NOT written because their
+// parent data was missing or broken. In prod every earner has a USER# item and
+// every source item has createdAt, so any nonzero count there means a real
+// user silently lost points and someone should look. Fire-and-forget for the
+// same reason as emitPointsAwardFailureMetric above.
+async function emitPointsAwardSkippedMetric(reason: "bad_created_at" | "no_user"): Promise<void> {
+  try {
+    await cloudwatch.send(
+      new PutMetricDataCommand({
+        Namespace: "MemeDay",
+        MetricData: [
+          {
+            MetricName: "PointsAwardSkipped",
+            Value: 1,
+            Unit: "Count",
+            Dimensions: [
+              { Name: "Stage", Value: STAGE },
+              { Name: "Reason", Value: reason },
+            ],
+          },
+        ],
+      })
+    );
+  } catch (err) {
+    console.error("failed to publish PointsAwardSkipped metric", err);
+  }
+}
+
 // Wraps one points-path operation so a failure there can never break the
 // feed/leaderboard/report handling around it (mirrors the existing per-record
 // try/catch, which swallows errors so Streams retries never fire). Anything
@@ -116,6 +144,38 @@ async function safePointsOp(op: () => Promise<void>, label: string): Promise<voi
 
 function isConditionalCheckFailed(err: unknown): boolean {
   return (err as { name?: string })?.name === "ConditionalCheckFailedException";
+}
+
+// For conditional writes where "the condition did not hold" just means there
+// was nothing to do (the row is already gone, or another writer changed it
+// first). Any other error is still a real fault and is rethrown.
+function ignoreConditionalCheckFailed(err: unknown): void {
+  if (!isConditionalCheckFailed(err)) throw err;
+}
+
+// KAN-67 invariant: no leaderboard or points row may exist for a user who has
+// no USER# item. Every view write for a user calls this first.
+//
+// This is a separate read before the write, not a ConditionCheck inside the
+// write's transaction, so in theory the user could vanish between the two.
+// That is safe here because no app path ever deletes a USER# item (the only
+// DeleteCommands in app/ and lib/ target PENDING# and REPORTQUEUE#), so "the
+// user existed a moment ago" means "the user still exists". A ConditionCheck
+// would also need the dynamodb:ConditionCheckItem permission, which the
+// runtime IAM user that runs the tests deliberately does not have (KAN-17).
+//
+// ConsistentRead because a brand new user can act within the same second
+// their USER# item was written; a stale read would wrongly skip their award.
+async function userExists(userId: string): Promise<boolean> {
+  const result = await docClient.send(
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: `USER#${userId}`, SK: `USER#${userId}` },
+      ProjectionExpression: "PK",
+      ConsistentRead: true,
+    })
+  );
+  return result.Item !== undefined;
 }
 
 function isTransactionCancelled(err: unknown): boolean {
@@ -172,6 +232,24 @@ async function refreshGsi3Sk(pk: string, sk: string): Promise<void> {
   const result = await docClient.send(new GetCommand({ TableName: TABLE, Key: { PK: pk, SK: sk } }));
   if (!result.Item) return;
   const points = (result.Item.points as number) ?? 0;
+  // KAN-67: a total that a reversal brought back down to zero (or below) is
+  // deleted instead of resynced, so no empty row is left behind on the
+  // leaderboard. Same race guard as the update below: the delete only happens
+  // if points is still the value just read, so a concurrent award that landed
+  // in between wins and the row stays.
+  if (points <= 0) {
+    await docClient
+      .send(
+        new DeleteCommand({
+          TableName: TABLE,
+          Key: { PK: pk, SK: sk },
+          ConditionExpression: "points = :points",
+          ExpressionAttributeValues: { ":points": points },
+        })
+      )
+      .catch(ignoreConditionalCheckFailed);
+    return;
+  }
   const userId = (sk as string).slice("USER#".length);
   try {
     await docClient.send(
@@ -215,6 +293,23 @@ async function awardPoints(params: {
 }): Promise<void> {
   const def = POINTS_ACTIONS[params.action];
   const sourceDate = new Date(params.createdAt);
+
+  // KAN-67 guards: write nothing at all unless the award has a valid day/week
+  // to land in and a real user to land on. Without the first check a missing
+  // createdAt becomes the literal buckets LB#DAY#NaN-NaN-NaN and
+  // LB#WEEK#NaN-WNaN, which no leaderboard read can ever reach. Without the
+  // second, rows pile up for user ids that never existed (see userExists).
+  if (Number.isNaN(sourceDate.getTime())) {
+    console.warn(`points award skipped (bad_created_at): ${params.awardSk} for ${params.earnerId}`);
+    await emitPointsAwardSkippedMetric("bad_created_at");
+    return;
+  }
+  if (!(await userExists(params.earnerId))) {
+    console.warn(`points award skipped (no_user): ${params.awardSk} for ${params.earnerId}`);
+    await emitPointsAwardSkippedMetric("no_user");
+    return;
+  }
+
   const dayKey = utcDateKey(sourceDate);
   const weekKey = isoWeekKey(sourceDate);
   const userSk = `USER#${params.earnerId}`;
@@ -340,31 +435,45 @@ async function reverseAward(
   const dayKey = utcDateKey(new Date(memeCreatedAt));
   const weekKey = isoWeekKey(new Date(memeCreatedAt));
   const userSk = `USER#${earnerId}`;
+  // KAN-67: attribute_exists(PK) on each subtraction. ADD on a missing item
+  // creates it, so without the condition, reversing against a total that is
+  // already gone (the LB#DAY# row expired by TTL, or was deleted at zero)
+  // would bring it back to life holding negative points. A total that is not
+  // there has nothing to subtract from, so a failed condition is a no-op.
   await Promise.all([
-    docClient.send(
-      new UpdateCommand({
-        TableName: TABLE,
-        Key: { PK: `LB#DAY#${dayKey}`, SK: userSk },
-        UpdateExpression: "ADD points :neg",
-        ExpressionAttributeValues: { ":neg": -points },
-      })
-    ),
-    docClient.send(
-      new UpdateCommand({
-        TableName: TABLE,
-        Key: { PK: `LB#WEEK#${weekKey}`, SK: userSk },
-        UpdateExpression: "ADD points :neg",
-        ExpressionAttributeValues: { ":neg": -points },
-      })
-    ),
-    docClient.send(
-      new UpdateCommand({
-        TableName: TABLE,
-        Key: { PK: "LB#ALLTIME", SK: userSk },
-        UpdateExpression: "ADD points :neg",
-        ExpressionAttributeValues: { ":neg": -points },
-      })
-    ),
+    docClient
+      .send(
+        new UpdateCommand({
+          TableName: TABLE,
+          Key: { PK: `LB#DAY#${dayKey}`, SK: userSk },
+          UpdateExpression: "ADD points :neg",
+          ConditionExpression: "attribute_exists(PK)",
+          ExpressionAttributeValues: { ":neg": -points },
+        })
+      )
+      .catch(ignoreConditionalCheckFailed),
+    docClient
+      .send(
+        new UpdateCommand({
+          TableName: TABLE,
+          Key: { PK: `LB#WEEK#${weekKey}`, SK: userSk },
+          UpdateExpression: "ADD points :neg",
+          ConditionExpression: "attribute_exists(PK)",
+          ExpressionAttributeValues: { ":neg": -points },
+        })
+      )
+      .catch(ignoreConditionalCheckFailed),
+    docClient
+      .send(
+        new UpdateCommand({
+          TableName: TABLE,
+          Key: { PK: "LB#ALLTIME", SK: userSk },
+          UpdateExpression: "ADD points :neg",
+          ConditionExpression: "attribute_exists(PK)",
+          ExpressionAttributeValues: { ":neg": -points },
+        })
+      )
+      .catch(ignoreConditionalCheckFailed),
   ]);
   await refreshPeriodTotals(earnerId, dayKey, weekKey);
   return existing.Item as Record<string, unknown>;
@@ -575,18 +684,69 @@ async function deleteFeedItem(memeId: string, score: number): Promise<void> {
 // Returns the count BEFORE this delta was applied (0 if the item didn't exist
 // yet) — KAN-101 uses that to tell a creator's first-ever clean meme apart
 // from a later one, without a separate read.
-async function adjustLeaderboard(creatorId: string, delta: 1 | -1): Promise<number> {
-  const result = await docClient.send(
-    new UpdateCommand({
-      TableName: TABLE,
-      Key: { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
-      UpdateExpression:
-        "ADD memeCount :delta SET creatorId = if_not_exists(creatorId, :cid)",
-      ExpressionAttributeValues: { ":delta": delta, ":cid": creatorId },
-      ReturnValues: "UPDATED_OLD",
-    })
-  );
-  return (result.Attributes?.memeCount as number) ?? 0;
+//
+// KAN-67: returns null when nothing was written at all. That happens on +1
+// for a creator with no USER# item, and on -1 when there is no positive count
+// to take from. null is deliberately not 0: the caller treats a previous count
+// of 0 as "first clean meme, maybe award a referral", and a skipped write must
+// never trigger that.
+async function adjustLeaderboard(creatorId: string, delta: 1 | -1): Promise<number | null> {
+  const key = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+
+  if (delta === 1) {
+    // No metric for this skip: a real user with a missing USER# item is
+    // already counted by the UPLOAD award skip in awardPoints.
+    if (!(await userExists(creatorId))) return null;
+    const result = await docClient.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: key,
+        UpdateExpression:
+          "ADD memeCount :delta SET creatorId = if_not_exists(creatorId, :cid)",
+        ExpressionAttributeValues: { ":delta": delta, ":cid": creatorId },
+        ReturnValues: "UPDATED_OLD",
+      })
+    );
+    return (result.Attributes?.memeCount as number) ?? 0;
+  }
+
+  // Decrement. "memeCount > :zero" fails both when the row is missing and when
+  // the count is already 0, so a decrement can never create a row or push the
+  // count negative (ADD on a missing item would otherwise create it at -1).
+  let prevMemeCount: number;
+  try {
+    const result = await docClient.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: key,
+        UpdateExpression: "ADD memeCount :delta",
+        ConditionExpression: "memeCount > :zero",
+        ExpressionAttributeValues: { ":delta": delta, ":zero": 0 },
+        ReturnValues: "UPDATED_OLD",
+      })
+    );
+    prevMemeCount = (result.Attributes?.memeCount as number) ?? 0;
+  } catch (err) {
+    ignoreConditionalCheckFailed(err);
+    return null;
+  }
+
+  // The creator's last counted meme is gone: delete the row instead of
+  // leaving a memeCount of 0 behind. Conditioned on the count still being 0 so
+  // that a concurrent +1 (a new meme landing right now) wins and keeps its row.
+  if (prevMemeCount + delta <= 0) {
+    await docClient
+      .send(
+        new DeleteCommand({
+          TableName: TABLE,
+          Key: key,
+          ConditionExpression: "memeCount = :zero",
+          ExpressionAttributeValues: { ":zero": 0 },
+        })
+      )
+      .catch(ignoreConditionalCheckFailed);
+  }
+  return prevMemeCount;
 }
 
 // REPORTQUEUE#GLOBAL: the admin listing's materialized view (KAN-43 follow-up),
@@ -879,6 +1039,24 @@ export const handler: DynamoDBStreamHandler = async (event) => {
           await deleteFeedItem(meme.memeId as string, (meme.score as number) ?? 0);
           await adjustLeaderboard(meme.creatorId as string, -1);
         }
+
+        // KAN-67: a hard-deleted meme (the manual removal runbook does this on
+        // prod) must not leave behind points it earned or a report queue row
+        // pointing at nothing. Run on every REMOVE, clean or not: all three
+        // are no-ops when there is nothing to undo, e.g. a meme that was
+        // already flagged had its awards reversed by the MODIFY branch above.
+        const memeId = meme.memeId as string;
+        const creatorId = meme.creatorId as string;
+        const createdAt = meme.createdAt as string;
+        await safePointsOp(
+          () => reverseUploadAward(creatorId, memeId, createdAt),
+          `reverse upload award for ${creatorId} on ${memeId}`
+        );
+        await safePointsOp(
+          () => reverseReferralAwardIfQualifying(creatorId, memeId, createdAt),
+          `reverse referral award qualified by ${memeId}`
+        );
+        await deleteReportQueueItem(memeId);
       }
     } catch (err) {
       console.error(`Error on ${pk}/${sk} [${record.eventName}]:`, err);

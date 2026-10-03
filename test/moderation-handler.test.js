@@ -389,11 +389,22 @@ test("moderation block: flagged item is removed from FEED#GLOBAL (and GSI3) once
   const { createMeme } = await import("../lib/db.ts");
   const { dynamo, TABLE } = await import("../lib/dynamo.ts");
   const { handler: streamHandler } = await import("../lambdas/stream-handler/index.ts");
-  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { GetCommand, PutCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
 
   const id = randomUUID();
   const creatorId = `test-mod-feed-${Date.now()}`;
   const feedSK = `${"0".repeat(15)}#${id}`;
+
+  // KAN-67: StreamHandler skips the leaderboard increment and the UPLOAD
+  // award for a creator with no USER# item, and counts the skip in a real
+  // CloudWatch metric (PointsAwardSkipped). Give the creator a USER# item so
+  // the simulated INSERT below behaves like a real publish.
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { PK: `USER#${creatorId}`, SK: `USER#${creatorId}`, userId: creatorId, authMethods: [], credScore: 0, createdAt: new Date().toISOString() },
+    })
+  );
 
   await createMeme({
     id,
@@ -459,6 +470,7 @@ test("moderation block: flagged item is removed from FEED#GLOBAL (and GSI3) once
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `MEME#${id}`, SK: `MEME#${id}` } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: "FEED#GLOBAL", SK: feedSK } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` } }));
+    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: `USER#${creatorId}`, SK: `USER#${creatorId}` } }));
   }
 });
 
