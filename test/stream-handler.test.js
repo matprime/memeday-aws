@@ -99,6 +99,48 @@ function reportImage(memeId, identityHash, reason, createdAt) {
   };
 }
 
+// KAN-67: StreamHandler only writes leaderboard and points rows for a creator
+// whose USER# item exists, so a test that expects those rows seeds one first.
+function userKey(userId) {
+  return { PK: `USER#${userId}`, SK: `USER#${userId}` };
+}
+
+async function seedUser(dynamo, TABLE, userId) {
+  const { PutCommand } = require("@aws-sdk/lib-dynamodb");
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { ...userKey(userId), userId, authMethods: [], credScore: 0, createdAt: new Date().toISOString() },
+    })
+  );
+}
+
+// The rows a clean MEME# INSERT's UPLOAD award writes for a creator who has a
+// USER# item: the ledger row plus the day/week/all-time totals. Bucket keys
+// come from lib/points-config.ts, the same functions the handler itself uses.
+async function uploadAwardKeys(creatorId, memeId, createdAt) {
+  const { utcDateKey, isoWeekKey } = await import("../lib/points-config.ts");
+  const d = new Date(createdAt);
+  return {
+    award: { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    totals: [
+      { PK: `LB#DAY#${utcDateKey(d)}`, SK: `USER#${creatorId}` },
+      { PK: `LB#WEEK#${isoWeekKey(d)}`, SK: `USER#${creatorId}` },
+      { PK: "LB#ALLTIME", SK: `USER#${creatorId}` },
+    ],
+  };
+}
+
+// createdAt carried by every memeImage() / memeImageWithStatus() below.
+const IMAGE_CREATED_AT = "2024-01-01T00:00:00.000Z";
+
+async function deleteKeys(dynamo, TABLE, keys) {
+  const { DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  for (const key of keys) {
+    await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: key }));
+  }
+}
+
 function skipIfNoCredentials(t) {
   if (!process.env.DYNAMODB_TABLE_NAME || !hasAwsCredentials()) {
     t.skip("Missing DYNAMODB_TABLE_NAME or AWS credentials");
@@ -117,6 +159,9 @@ test("stream-handler: INSERT writes feed item and increments leaderboard", async
   const memeId = `test_sh_insert_${Date.now()}`;
   const creatorId = `test_sh_creator_${Date.now()}`;
   const feedSK = `${padScore(0)}#${memeId}`;
+  const uploadAward = await uploadAwardKeys(creatorId, memeId, IMAGE_CREATED_AT);
+
+  await seedUser(dynamo, TABLE, creatorId);
 
   try {
     await handler(streamEvent("INSERT", memeImage(memeId, creatorId, 0)), {}, () => {});
@@ -137,6 +182,7 @@ test("stream-handler: INSERT writes feed item and increments leaderboard", async
   } finally {
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: "FEED#GLOBAL", SK: feedSK } }));
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` } }));
+    await deleteKeys(dynamo, TABLE, [userKey(creatorId), uploadAward.award, ...uploadAward.totals]);
   }
 });
 
@@ -383,7 +429,7 @@ test("stream-handler: active -> removed deletes the S3 object, invalidates Cloud
     const lbItem = await dynamo.send(
       new GetCommand({ TableName: TABLE, Key: { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` } })
     );
-    assert.strictEqual(lbItem.Item.memeCount, 0, "leaderboard count is decremented");
+    assert.strictEqual(lbItem.Item, undefined, "leaderboard count is decremented, and a row that reaches 0 is deleted");
   } finally {
     s3.send = originalS3Send;
     cloudfront.send = originalCfSend;
@@ -636,5 +682,191 @@ test("stream-handler: takedown removes the REPORTQUEUE#GLOBAL item", async (t) =
     cloudfront.send = originalCfSend;
     sns.send = originalSnsSend;
     await dynamo.send(new DeleteCommand({ TableName: TABLE, Key: queueKey }));
+  }
+});
+
+// ── KAN-67: no view row without its parent ──────────────────────────────────
+// Every test below goes through the in-process handler only (no real MEME#
+// item is written), so the deployed StreamHandler never reacts to it.
+
+test("stream-handler: INSERT for a creator with no USER# item writes no LEADERBOARD#GLOBAL row", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_sh_nouser_${Date.now()}`;
+  const creatorId = `test_sh_nouser_creator_${Date.now()}`; // deliberately never seeded
+  const feedKey = { PK: "FEED#GLOBAL", SK: `${padScore(0)}#${memeId}` };
+  const lbKey = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+  const uploadAward = await uploadAwardKeys(creatorId, memeId, IMAGE_CREATED_AT);
+
+  // The skipped UPLOAD award emits PointsAwardSkipped: stub it so the test
+  // does not publish a real metric (test/points.test.js asserts on it).
+  const originalCwSend = cloudwatch.send;
+  const originalConsoleWarn = console.warn;
+  cloudwatch.send = async () => ({});
+  console.warn = () => {};
+
+  try {
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, 0)), {}, () => {});
+
+    const lbItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: lbKey }));
+    assert.strictEqual(lbItem.Item, undefined, "no leaderboard row for a creator who has no USER# item");
+
+    const feedItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: feedKey }));
+    assert.ok(feedItem.Item, "the feed item hangs off the meme, not the user, so it is still written");
+  } finally {
+    cloudwatch.send = originalCwSend;
+    console.warn = originalConsoleWarn;
+    await deleteKeys(dynamo, TABLE, [feedKey, lbKey, uploadAward.award, ...uploadAward.totals]);
+  }
+});
+
+test("stream-handler: a leaderboard decrement on a missing row creates no row", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_sh_dec_missing_${Date.now()}`;
+  const creatorId = `test_sh_dec_missing_creator_${Date.now()}`;
+  const lbKey = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+
+  try {
+    // REMOVE of a clean meme decrements; nothing was ever counted for this creator.
+    await handler(streamEvent("REMOVE", null, memeImage(memeId, creatorId, 0)), {}, () => {});
+
+    const lbItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: lbKey }));
+    assert.strictEqual(lbItem.Item, undefined, "a decrement never creates a row (it used to create one at memeCount -1)");
+  } finally {
+    await deleteKeys(dynamo, TABLE, [lbKey]);
+  }
+});
+
+test("stream-handler: a decrement that brings memeCount to 0 deletes the LEADERBOARD#GLOBAL row", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { PutCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_sh_dec_zero_${Date.now()}`;
+  const creatorId = `test_sh_dec_zero_creator_${Date.now()}`;
+  const lbKey = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: { ...lbKey, creatorId, memeCount: 1 } }));
+
+  try {
+    await handler(streamEvent("REMOVE", null, memeImage(memeId, creatorId, 0)), {}, () => {});
+
+    const lbItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: lbKey }));
+    assert.strictEqual(lbItem.Item, undefined, "the creator's last meme is gone, so the row is deleted rather than left at 0");
+  } finally {
+    await deleteKeys(dynamo, TABLE, [lbKey]);
+  }
+});
+
+test("stream-handler: REMOVE of a clean meme reverses its UPLOAD award, deletes LB# totals that reach 0, and deletes the REPORTQUEUE#GLOBAL row", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { PutCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_sh_remove_clean_${Date.now()}`;
+  const creatorId = `test_sh_remove_clean_creator_${Date.now()}`;
+  const feedKey = { PK: "FEED#GLOBAL", SK: `${padScore(0)}#${memeId}` };
+  const lbKey = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+  const queueKey = { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${memeId}` };
+  const uploadAward = await uploadAwardKeys(creatorId, memeId, IMAGE_CREATED_AT);
+
+  await seedUser(dynamo, TABLE, creatorId);
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { ...queueKey, memeId, creatorId, reason: "spam", reporterHashes: new Set(["hash-a"]) },
+    })
+  );
+
+  try {
+    // The meme is published: feed item, memeCount 1, 10 UPLOAD points.
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, 0)), {}, () => {});
+
+    const awardBefore = await dynamo.send(new GetCommand({ TableName: TABLE, Key: uploadAward.award }));
+    assert.ok(awardBefore.Item, "sanity check: the UPLOAD award exists before the meme is deleted");
+    for (const key of uploadAward.totals) {
+      const total = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
+      assert.strictEqual(total.Item?.points, 10, `sanity check: ${key.PK} holds the UPLOAD points before the delete`);
+    }
+
+    // The MEME# item is hard-deleted (what the manual removal runbook does).
+    await handler(streamEvent("REMOVE", null, memeImage(memeId, creatorId, 0)), {}, () => {});
+
+    const awardAfter = await dynamo.send(new GetCommand({ TableName: TABLE, Key: uploadAward.award }));
+    assert.strictEqual(awardAfter.Item, undefined, "the UPLOAD award is reversed");
+    for (const key of uploadAward.totals) {
+      const total = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
+      assert.strictEqual(total.Item, undefined, `${key.PK} reached 0 and is deleted, not left as a 0-point row`);
+    }
+
+    const queueItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: queueKey }));
+    assert.strictEqual(queueItem.Item, undefined, "the report queue row for the deleted meme is gone");
+
+    const feedItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: feedKey }));
+    assert.strictEqual(feedItem.Item, undefined, "the feed item is gone");
+
+    const lbItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: lbKey }));
+    assert.strictEqual(lbItem.Item, undefined, "the leaderboard row reached 0 and is deleted");
+  } finally {
+    await deleteKeys(dynamo, TABLE, [
+      userKey(creatorId),
+      feedKey,
+      lbKey,
+      queueKey,
+      uploadAward.award,
+      ...uploadAward.totals,
+    ]);
+  }
+});
+
+test("stream-handler: REMOVE of a pending_review meme deletes its REPORTQUEUE#GLOBAL row without a second leaderboard decrement", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { PutCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_sh_remove_pending_${Date.now()}`;
+  const creatorId = `test_sh_remove_pending_creator_${Date.now()}`;
+  const lbKey = { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` };
+  const queueKey = { PK: "REPORTQUEUE#GLOBAL", SK: `MEME#${memeId}` };
+
+  // The creator's two other memes are still counted. This one already lost
+  // its count when it was flagged (the MODIFY to pending_review).
+  await dynamo.send(new PutCommand({ TableName: TABLE, Item: { ...lbKey, creatorId, memeCount: 2 } }));
+  await dynamo.send(
+    new PutCommand({
+      TableName: TABLE,
+      Item: { ...queueKey, memeId, creatorId, reason: "spam", reporterHashes: new Set(["hash-a"]) },
+    })
+  );
+
+  try {
+    await handler(
+      streamEvent("REMOVE", null, memeImageWithStatus(memeId, creatorId, "pending_review")),
+      {},
+      () => {}
+    );
+
+    const queueItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: queueKey }));
+    assert.strictEqual(queueItem.Item, undefined, "the queue row is deleted even though the meme was not feed-eligible");
+
+    const lbItem = await dynamo.send(new GetCommand({ TableName: TABLE, Key: lbKey }));
+    assert.strictEqual(lbItem.Item.memeCount, 2, "no double decrement: the flag already took this meme's count");
+  } finally {
+    await deleteKeys(dynamo, TABLE, [lbKey, queueKey]);
   }
 });

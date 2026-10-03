@@ -102,6 +102,26 @@ function periodTotalKeys(userId, createdAt) {
   ];
 }
 
+// KAN-67: StreamHandler only writes points and leaderboard rows for a user
+// whose USER# item exists, so every earner in these tests needs a real one.
+// Without it the award under test would be skipped before it reached the
+// logic the test is about (and would emit a real PointsAwardSkipped metric).
+function userKey(userId) {
+  return { PK: `USER#${userId}`, SK: `USER#${userId}` };
+}
+
+async function seedUsers(dynamo, TABLE, userIds) {
+  const { PutCommand } = require("@aws-sdk/lib-dynamodb");
+  for (const userId of userIds) {
+    await dynamo.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: { ...userKey(userId), userId, authMethods: [], credScore: 0, createdAt: new Date().toISOString() },
+      })
+    );
+  }
+}
+
 function memeImage(memeId, creatorId, status, createdAt) {
   return {
     PK: { S: `MEME#${memeId}` },
@@ -211,6 +231,8 @@ test("points: a duplicate/replayed like award only awards once", async (t) => {
   // awarding creatorId an UPLOAD independently of anything this test
   // simulates, so that award's ledger row needs cleanup too.
   const keys = [
+    userKey(creatorId),
+    userKey(likerId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
@@ -218,6 +240,8 @@ test("points: a duplicate/replayed like award only awards once", async (t) => {
     ...periodTotalKeys(likerId, now),
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, likerId]);
 
   await dynamo.send(
     new PutCommand({
@@ -316,6 +340,8 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
   // This direct PutCommand also triggers the real deployed StreamHandler to
   // award creatorId an UPLOAD independently of the comment awards below.
   const keys = [
+    userKey(creatorId),
+    userKey(commenterId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` },
@@ -323,6 +349,8 @@ test("points: a comment under 10 chars awards nothing; a second qualifying comme
     ...periodTotalKeys(commenterId, now),
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, commenterId]);
 
   await dynamo.send(
     new PutCommand({
@@ -391,12 +419,17 @@ test("points: a daily cap already at its ceiling blocks one more award of that a
   // This direct PutCommand also triggers the real deployed StreamHandler to
   // award creatorId an UPLOAD, unrelated to the GIVE_LIKE cap under test.
   const keys = [
+    userKey(creatorId),
+    userKey(likerId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, nowIso),
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, likerId]);
 
   await dynamo.send(
     new PutCommand({
@@ -440,6 +473,8 @@ test("points: flagging a published meme reverses its upload award and its qualif
   const memeCreatedAt = new Date().toISOString();
 
   const keys = [
+    userKey(referrerId),
+    userKey(referredId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `LEADERBOARD#GLOBAL`, SK: `USER#${referredId}` },
     { PK: `POINTS#${referredId}`, SK: "REFERREDBY" },
@@ -448,6 +483,8 @@ test("points: flagging a published meme reverses its upload award and its qualif
     ...periodTotalKeys(referredId, memeCreatedAt),
     ...periodTotalKeys(referrerId, memeCreatedAt),
   ];
+
+  await seedUsers(dynamo, TABLE, [referrerId, referredId]);
 
   try {
     // 1. referrer's marker exists (simulates POST /api/users' referral attach
@@ -518,13 +555,18 @@ test("points: attaching a referrer after the referred user's first meme never aw
   const memeCreatedAt = new Date().toISOString();
 
   const keys = [
+    userKey(referrerId),
+    userKey(referredId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `LEADERBOARD#GLOBAL`, SK: `USER#${referredId}` },
     { PK: `POINTS#${referredId}`, SK: "REFERREDBY" },
     { PK: `POINTS#${referredId}`, SK: `AWARD#UPLOAD#${memeId}` },
     { PK: `POINTS#${referrerId}`, SK: `AWARD#REFERRAL#${referredId}` },
     ...periodTotalKeys(referredId, memeCreatedAt),
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
   ];
+
+  await seedUsers(dynamo, TABLE, [referrerId, referredId]);
 
   try {
     // First clean meme lands BEFORE any referrer is attached.
@@ -713,11 +755,15 @@ test("points: UPLOAD's daily cap (3 uploads/day) blocks a 4th", async (t) => {
 
   const dayCounterKey = { PK: `POINTS#${creatorId}`, SK: `DAY#${dayKey}#UPLOAD` };
   const keys = [
+    userKey(creatorId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
     dayCounterKey,
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
 
   await dynamo.send(
     new PutCommand({ TableName: TABLE, Item: { ...dayCounterKey, used: 3, expiresAt: Math.floor(Date.now() / 1000) + 86400 } })
@@ -752,6 +798,8 @@ test("points: RECEIVE_LIKE's daily cap (100 pts/day) blocks one more", async (t)
   // The meme PutCommand below also triggers the real deployed StreamHandler
   // to award creatorId an UPLOAD, unrelated to the RECEIVE_LIKE cap under test.
   const keys = [
+    userKey(creatorId),
+    userKey(likerId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
@@ -760,6 +808,8 @@ test("points: RECEIVE_LIKE's daily cap (100 pts/day) blocks one more", async (t)
     ...periodTotalKeys(likerId, now),
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, likerId]);
 
   await dynamo.send(
     new PutCommand({
@@ -801,6 +851,8 @@ test("points: GIVE_COMMENT's daily cap (10/day) blocks an 11th", async (t) => {
   // The meme PutCommand below also triggers the real deployed StreamHandler
   // to award creatorId an UPLOAD, unrelated to the GIVE_COMMENT cap under test.
   const keys = [
+    userKey(creatorId),
+    userKey(commenterId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${commenterId}`, SK: `AWARD#GIVE_COMMENT#${memeId}` },
@@ -808,6 +860,8 @@ test("points: GIVE_COMMENT's daily cap (10/day) blocks an 11th", async (t) => {
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, commenterId]);
 
   await dynamo.send(
     new PutCommand({
@@ -853,6 +907,8 @@ test("points: RECEIVE_COMMENT's daily cap (50 pts/day) blocks one more", async (
   // The meme PutCommand below also triggers the real deployed StreamHandler
   // to award creatorId an UPLOAD, unrelated to the RECEIVE_COMMENT cap under test.
   const keys = [
+    userKey(creatorId),
+    userKey(commenterId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     dayCounterKey,
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_COMMENT#${memeId}#${commenterId}` },
@@ -861,6 +917,8 @@ test("points: RECEIVE_COMMENT's daily cap (50 pts/day) blocks one more", async (
     ...periodTotalKeys(commenterId, now),
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, commenterId]);
 
   await dynamo.send(
     new PutCommand({
@@ -903,6 +961,8 @@ test("points: REFERRAL's daily cap (3/day) blocks a 4th referral award for the s
 
   const dayCounterKey = { PK: `POINTS#${referrerId}`, SK: `DAY#${dayKey}#REFERRAL` };
   const keys = [
+    userKey(referrerId),
+    userKey(referredId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: "LEADERBOARD#GLOBAL", SK: `USER#${referredId}` },
     { PK: `POINTS#${referredId}`, SK: "REFERREDBY" },
@@ -910,7 +970,10 @@ test("points: REFERRAL's daily cap (3/day) blocks a 4th referral award for the s
     { PK: `POINTS#${referrerId}`, SK: `AWARD#REFERRAL#${referredId}` },
     { PK: `POINTS#${referredId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(referredId, now),
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
   ];
+
+  await seedUsers(dynamo, TABLE, [referrerId, referredId]);
 
   await dynamo.send(
     new PutCommand({
@@ -952,11 +1015,14 @@ test("points: taking a meme down (status -> removed) also reverses its upload aw
   const now = new Date().toISOString();
 
   const keys = [
+    userKey(creatorId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
 
   const originalS3Send = s3.send;
   const originalCfSend = cloudfront.send;
@@ -1042,6 +1108,8 @@ test("points: a TransactionConflict cancellation is retried and the award still 
   // This direct PutCommand also triggers the real deployed StreamHandler to
   // award creatorId an UPLOAD, unrelated to the GIVE_LIKE conflict under test.
   const keys = [
+    userKey(creatorId),
+    userKey(likerId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#RECEIVE_LIKE#${memeId}#${likerId}` },
@@ -1049,6 +1117,8 @@ test("points: a TransactionConflict cancellation is retried and the award still 
     ...periodTotalKeys(likerId, now),
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, likerId]);
 
   await dynamo.send(
     new PutCommand({
@@ -1119,10 +1189,14 @@ test("points: a persistent TransactionConflict exhausts retries and emits Points
   // this test mocks below. docClient here is this file's in-process
   // handler's client, not the live Lambda's.
   const keys = [
+    userKey(creatorId),
+    userKey(likerId),
     { PK: `MEME#${memeId}`, SK: `MEME#${memeId}` },
     { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
     ...periodTotalKeys(creatorId, now),
   ];
+
+  await seedUsers(dynamo, TABLE, [creatorId, likerId]);
 
   await dynamo.send(
     new PutCommand({
@@ -1221,6 +1295,128 @@ test("points: a leaderboard entry with no USER# record is excluded, not shown wi
       "a leaderboard row with no USER# record is dropped from what the page renders"
     );
   } finally {
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+// ── KAN-67: no points or leaderboard row without a parent ───────────────────
+// Both tests below drive a MEME# INSERT through the in-process handler only
+// (no real MEME# item is written), so the deployed StreamHandler never sees
+// it and cannot write rows behind the assertions' back.
+
+test("points: an award for an earner with no USER# item writes nothing and emits PointsAwardSkipped (no_user)", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_pts_nouser_${Date.now()}`;
+  const creatorId = `test_pts_nouser_creator_${Date.now()}`; // deliberately never seeded
+  const now = new Date().toISOString();
+
+  const mustNotExist = [
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `DAY#${now.slice(0, 10)}#UPLOAD` },
+    ...periodTotalKeys(creatorId, now),
+  ];
+  const keys = [
+    ...mustNotExist,
+    { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
+  ];
+
+  const originalCwSend = cloudwatch.send;
+  const originalConsoleWarn = console.warn;
+  console.warn = () => {};
+  const metricCalls = [];
+  cloudwatch.send = async (command) => {
+    metricCalls.push(command.input);
+    return {};
+  };
+
+  try {
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, "active", now)), {}, () => {});
+
+    for (const key of mustNotExist) {
+      const result = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
+      assert.strictEqual(result.Item, undefined, `nothing written at ${key.PK} / ${key.SK} for a user with no USER# item`);
+    }
+
+    const skipped = metricCalls.filter((c) => c.MetricData?.[0]?.MetricName === "PointsAwardSkipped");
+    assert.strictEqual(skipped.length, 1, "exactly one skipped award (the UPLOAD) is counted");
+    assert.strictEqual(skipped[0].Namespace, "MemeDay");
+    assert.deepStrictEqual(
+      skipped[0].MetricData[0].Dimensions,
+      [
+        { Name: "Stage", Value: "dev" },
+        { Name: "Reason", Value: "no_user" },
+      ],
+      "the metric says which stage and why"
+    );
+  } finally {
+    cloudwatch.send = originalCwSend;
+    console.warn = originalConsoleWarn;
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+test("points: an award whose source item has no createdAt writes nothing, creates no NaN bucket, and emits PointsAwardSkipped (bad_created_at)", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_pts_nodate_${Date.now()}`;
+  const creatorId = `test_pts_nodate_creator_${Date.now()}`;
+
+  // The user exists, so the only thing wrong with this award is the missing
+  // createdAt. periodTotalKeys(creatorId, undefined) is exactly the pair of
+  // "NaN" buckets the unguarded code used to write into.
+  const image = memeImage(memeId, creatorId, "active", "unused");
+  delete image.createdAt;
+
+  const mustNotExist = [
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `DAY#${utcDateKey(new Date(undefined))}#UPLOAD` },
+    ...periodTotalKeys(creatorId, undefined),
+  ];
+  const keys = [
+    userKey(creatorId),
+    ...mustNotExist,
+    { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
+  ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
+
+  const originalCwSend = cloudwatch.send;
+  const originalConsoleWarn = console.warn;
+  console.warn = () => {};
+  const metricCalls = [];
+  cloudwatch.send = async (command) => {
+    metricCalls.push(command.input);
+    return {};
+  };
+
+  try {
+    await handler(streamEvent("INSERT", image), {}, () => {});
+
+    for (const key of mustNotExist) {
+      const result = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
+      assert.strictEqual(result.Item, undefined, `nothing written at ${key.PK} / ${key.SK} for a source with no createdAt`);
+    }
+
+    const skipped = metricCalls.filter((c) => c.MetricData?.[0]?.MetricName === "PointsAwardSkipped");
+    assert.strictEqual(skipped.length, 1, "exactly one skipped award (the UPLOAD) is counted");
+    assert.deepStrictEqual(skipped[0].MetricData[0].Dimensions, [
+      { Name: "Stage", Value: "dev" },
+      { Name: "Reason", Value: "bad_created_at" },
+    ]);
+  } finally {
+    cloudwatch.send = originalCwSend;
+    console.warn = originalConsoleWarn;
     await cleanup(dynamo, DeleteCommand, TABLE, keys);
   }
 });

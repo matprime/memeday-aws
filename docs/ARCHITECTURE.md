@@ -501,6 +501,54 @@ how many requests they can make.
   `MOCK_CREATORS` — the points program only means something for an account
   that can actually earn.
 
+## Materialized view invariant (KAN-67)
+
+No Streams-maintained row may exist without its parent item. `LB#DAY#`,
+`LB#WEEK#`, `LB#ALLTIME`, `POINTS#<userId>` and `LEADERBOARD#GLOBAL` rows
+require `USER#<userId>` to exist. `FEED#GLOBAL` and `REPORTQUEUE#GLOBAL` rows
+require their `MEME#<memeId>` item. StreamHandler
+(`lambdas/stream-handler/index.ts`) is the only writer of these rows and
+enforces the invariant at write time; nothing else checks it or repairs it
+afterwards.
+
+- User-parented rows: `awardPoints` and the `LEADERBOARD#GLOBAL` increment
+  both call `userExists` (a strongly consistent `GetItem` on the `USER#`
+  item) first and write nothing if it is missing. This is a read before the
+  write, not a condition inside the write, so it relies on the fact that no
+  path in `app/` or `lib/` deletes a `USER#` item. Deleting one by hand
+  leaves its rows behind. The `REFERREDBY` marker has no such check: it is
+  only ever written off that user's own `USER#` stream record.
+- `awardPoints` also writes nothing when the source item's `createdAt` does
+  not parse as a date. Without that, the award lands in the literal buckets
+  `LB#DAY#NaN-NaN-NaN` and `LB#WEEK#NaN-WNaN`, which no leaderboard read can
+  reach. This check covers awards only; the `LEADERBOARD#GLOBAL` count does
+  not depend on `createdAt`.
+- Meme-parented rows: a `FEED#GLOBAL` row is only written from the meme's own
+  `MEME#` stream record, and a `REPORTQUEUE#GLOBAL` row only after a `GetItem`
+  finds the `MEME#` item. Both are deleted when that meme's `MEME#` item is
+  removed (see REMOVE below).
+- Rows that reach zero are deleted, not left at 0. A `LEADERBOARD#GLOBAL`
+  decrement is conditioned on `memeCount > 0`, so it can neither create a row
+  nor go negative, and the row is deleted when the count reaches 0
+  (conditioned on it still being 0, so a concurrent increment wins). A period
+  total whose `points` is 0 or less is deleted by the same always-run step
+  that otherwise resyncs `GSI3SK`, under the same condition on the value just
+  read.
+- REMOVE: a hard-deleted `MEME#` item (in any status) has its
+  `AWARD#UPLOAD#<memeId>` and any referral award it qualified reversed, and
+  its `REPORTQUEUE#GLOBAL` row deleted, in addition to the feed and
+  leaderboard cleanup a clean meme already got. This is the same reversal the
+  flagged-meme path in Points & leaderboard above uses. Each subtraction from
+  a period total is conditioned on the row existing, so reversing against a
+  total that is already gone (TTL-expired `LB#DAY#`, or deleted at zero) is a
+  no-op instead of recreating it with negative points.
+- Observability: every award skipped by the two `awardPoints` checks emits
+  `MemeDay/PointsAwardSkipped`, dimensioned by `Stage` and `Reason`
+  (`no_user` or `bad_created_at`), and logs a warning. There is no alarm on
+  it today. In prod every earner has a `USER#` item and every source item has
+  `createdAt`, so a nonzero value there means a real user silently lost
+  points. A skipped `LEADERBOARD#GLOBAL` increment emits nothing of its own.
+
 ## Observability
 
 - SNS topic `memeday-alerts` (prod) / `memeday-alerts-dev`, email
@@ -538,8 +586,8 @@ Lambdas have their own execution roles. S3Handler and ModerationHandler get
 S3 access scoped to `uploads/*`, and `lambda:InvokeFunction` on
 ModerationHandler specifically, not `*`. StreamHandler additionally gets
 CloudWatch `PutMetricData` conditioned on namespace `MemeDay` (KAN-101, for
-`PointsAwardFailure`), same condition-only scoping as the runtime user's grant
-above.
+`PointsAwardFailure` and `PointsAwardSkipped`), same condition-only scoping as 
+the runtime user's grant above.
 
 ## Admin
 

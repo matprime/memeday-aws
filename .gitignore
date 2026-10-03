@@ -14,3 +14,6 @@ infra/dist/
 HANDOFF.md
 *.tsbuildinfo
 .vercel
+
+# KAN-67 sweep script backups: full copies of deleted table rows
+backups/
