@@ -293,12 +293,13 @@ test("wallet login: a successful signature check stamps walletVerifiedAt on the 
   const { dynamo, TABLE } = await load("lib/dynamo.ts");
   const {
     CognitoIdentityProviderClient,
-    AdminDeleteUserCommand,
+    DeleteUserCommand,
   } = require("@aws-sdk/client-cognito-identity-provider");
 
   const wallet = generateTestWallet();
   const ip = `test-login-stamp-ip-${Date.now()}`;
   let userId;
+  let accessToken;
   try {
     const nonceRes = await postNonce(
       new Request("http://x/api/auth/wallet/nonce", {
@@ -318,7 +319,7 @@ test("wallet login: a successful signature check stamps walletVerifiedAt on the 
       })
     );
     assert.strictEqual(verifyRes.status, 200);
-    const { accessToken } = await verifyRes.json();
+    ({ accessToken } = await verifyRes.json());
     userId = decodeJwtSub(accessToken);
 
     const { GetCommand } = require("@aws-sdk/lib-dynamodb");
@@ -330,14 +331,11 @@ test("wallet login: a successful signature check stamps walletVerifiedAt on the 
     assert.ok(Item.walletVerifiedAt, "walletVerifiedAt is stamped on a successful wallet login");
   } finally {
     if (userId) await deleteUserItem(dynamo, TABLE, userId);
-    const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
-    await client
-      .send(
-        new AdminDeleteUserCommand({
-          UserPoolId: process.env.COGNITO_USER_POOL_ID,
-          Username: `wallet_${wallet.walletAddress}`,
-        })
-      )
-      .catch(() => {});
+    // Self-delete with the user's own token (KAN-102). No token means the
+    // verify route itself failed, and that assertion is already failing the test.
+    if (accessToken) {
+      const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
+      await client.send(new DeleteUserCommand({ AccessToken: accessToken }));
+    }
   }
 });

@@ -104,8 +104,8 @@ test("launch-config: an email-authenticated (non-wallet) caller gets walletAuthe
     assert.strictEqual(body.live, false, "devnet test env must never regress to live:true");
     assert.strictEqual(body.partnerWallet, undefined, "off mainnet, no Bags secret is ever read or returned");
   } finally {
-    await session.cleanup();
     await cleanupRateCounter(dynamo, TABLE, RATE_LIMITS, "bagsLaunchConfigPerUser", session.userId);
+    await session.cleanup();
   }
 });
 
@@ -127,8 +127,8 @@ test("launch-config: a wallet-authenticated caller gets walletAuthed: true", asy
     const body = await res.json();
     assert.strictEqual(body.walletAuthed, true);
   } finally {
-    await session.cleanup();
     await cleanupRateCounter(dynamo, TABLE, RATE_LIMITS, "bagsLaunchConfigPerUser", session.userId);
+    await session.cleanup();
   }
 });
 
