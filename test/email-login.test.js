@@ -57,7 +57,7 @@ test("email auth: sign-in with email returns a Cognito token", async (t) => {
     CognitoIdentityProviderClient,
     AdminCreateUserCommand,
     AdminSetUserPasswordCommand,
-    AdminDeleteUserCommand,
+    DeleteUserCommand,
   } = require("@aws-sdk/client-cognito-identity-provider");
 
   const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
@@ -105,10 +105,11 @@ test("email auth: sign-in with email returns a Cognito token", async (t) => {
       })
     );
 
+  let accessToken;
   try {
     const ok = await loginRequest({ email, password });
     assert.strictEqual(ok.status, 200, "login with correct password should succeed");
-    const { accessToken } = await ok.json();
+    ({ accessToken } = await ok.json());
     assert.ok(accessToken, "expected a Cognito access token");
     // Cognito access tokens are JWTs (three dot-separated segments)
     assert.strictEqual(accessToken.split(".").length, 3, "token should be a JWT");
@@ -116,8 +117,10 @@ test("email auth: sign-in with email returns a Cognito token", async (t) => {
     const bad = await loginRequest({ email, password: "WrongPass123!" });
     assert.strictEqual(bad.status, 401, "wrong password should be rejected");
   } finally {
-    await client.send(
-      new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: username })
-    );
+    // Self-delete with the user's own token (KAN-102). No token means login
+    // itself failed, and that assertion is already failing the test.
+    if (accessToken) {
+      await client.send(new DeleteUserCommand({ AccessToken: accessToken }));
+    }
   }
 });

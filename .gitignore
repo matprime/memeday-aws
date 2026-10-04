@@ -17,3 +17,6 @@ HANDOFF.md
 
 # KAN-67 sweep script backups: full copies of deleted table rows
 backups/
+
+# KAN-102 orphan Cognito user cleanup reports
+.cleanup-reports/

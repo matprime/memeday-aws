@@ -36,7 +36,7 @@ async function createTestCognitoSession(username) {
     AdminCreateUserCommand,
     AdminSetUserPasswordCommand,
     AdminInitiateAuthCommand,
-    AdminDeleteUserCommand,
+    DeleteUserCommand,
   } = require("@aws-sdk/client-cognito-identity-provider");
 
   const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION ?? "us-east-1" });
@@ -70,10 +70,11 @@ async function createTestCognitoSession(username) {
   const accessToken = result.AuthenticationResult.AccessToken;
   const userId = decodeJwtSub(accessToken);
 
+  // Self-delete with the session's own access token. DeleteUser is authorized
+  // by the token, not by IAM, so it works under the scoped runtime user too.
+  // Errors are not swallowed: a failed delete must fail the test (KAN-102).
   const cleanup = async () => {
-    await client
-      .send(new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: username }))
-      .catch(() => {});
+    await client.send(new DeleteUserCommand({ AccessToken: accessToken }));
   };
 
   return { accessToken, userId, cleanup };

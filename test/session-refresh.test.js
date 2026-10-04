@@ -68,7 +68,7 @@ test("session: login issues a refresh cookie that mints a fresh access token", a
     CognitoIdentityProviderClient,
     AdminCreateUserCommand,
     AdminSetUserPasswordCommand,
-    AdminDeleteUserCommand,
+    DeleteUserCommand,
   } = require("@aws-sdk/client-cognito-identity-provider");
 
   const client = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
@@ -97,6 +97,7 @@ test("session: login issues a refresh cookie that mints a fresh access token", a
     })
   );
 
+  let firstToken;
   try {
     const loginRes = await login(
       new Request("http://localhost/api/auth/email/login", {
@@ -112,7 +113,7 @@ test("session: login issues a refresh cookie that mints a fresh access token", a
       })
     );
     assert.strictEqual(loginRes.status, 200);
-    const { accessToken: firstToken } = await loginRes.json();
+    ({ accessToken: firstToken } = await loginRes.json());
 
     const setCookie = loginRes.headers.get("set-cookie");
     assert.ok(setCookie, "login must set a cookie");
@@ -138,9 +139,11 @@ test("session: login issues a refresh cookie that mints a fresh access token", a
       "renewed token must not expire before the one it replaces"
     );
   } finally {
-    await client.send(
-      new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: username })
-    );
+    // Self-delete with the user's own token (KAN-102). No token means login
+    // itself failed, and that assertion is already failing the test.
+    if (firstToken) {
+      await client.send(new DeleteUserCommand({ AccessToken: firstToken }));
+    }
   }
 });
 
