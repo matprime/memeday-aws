@@ -127,6 +127,35 @@ async function emitPointsAwardSkippedMetric(reason: "bad_created_at" | "no_user"
   }
 }
 
+// KAN-105: counts a GSI3SK resync that lost to a concurrent transaction on
+// every attempt. The points write it follows is already settled by then, so
+// nothing was lost: the total only sorts by a stale value until the next
+// refresh of that row. Kept off PointsAwardFailure so that alarm pages for
+// lost work only. Fire-and-forget for the same reason as
+// emitPointsAwardFailureMetric above.
+async function emitPointsAwardResyncConflictMetric(reason: "transaction_conflict"): Promise<void> {
+  try {
+    await cloudwatch.send(
+      new PutMetricDataCommand({
+        Namespace: "MemeDay",
+        MetricData: [
+          {
+            MetricName: "PointsAwardResyncConflict",
+            Value: 1,
+            Unit: "Count",
+            Dimensions: [
+              { Name: "Stage", Value: STAGE },
+              { Name: "Reason", Value: reason },
+            ],
+          },
+        ],
+      })
+    );
+  } catch (err) {
+    console.error("failed to publish PointsAwardResyncConflict metric", err);
+  }
+}
+
 // Wraps one points-path operation so a failure there can never break the
 // feed/leaderboard/report handling around it (mirrors the existing per-record
 // try/catch, which swallows errors so Streams retries never fire). Anything
@@ -144,6 +173,14 @@ async function safePointsOp(op: () => Promise<void>, label: string): Promise<voi
 
 function isConditionalCheckFailed(err: unknown): boolean {
   return (err as { name?: string })?.name === "ConditionalCheckFailedException";
+}
+
+// What a plain (non-transactional) write gets when it lands on an item that a
+// TransactWriteItems from another shard is still holding. Not the same thing
+// as a cancelled transaction, which reports its conflict inside
+// CancellationReasons (see isExpectedCancellation).
+function isTransactionConflict(err: unknown): boolean {
+  return (err as { name?: string })?.name === "TransactionConflictException";
 }
 
 // For conditional writes where "the condition did not hold" just means there
@@ -229,43 +266,64 @@ function sleep(ms: number): Promise<void> {
 // a lost race this just no-ops, since the winner's own refresh already covers
 // the value that matters.
 async function refreshGsi3Sk(pk: string, sk: string): Promise<void> {
-  const result = await docClient.send(new GetCommand({ TableName: TABLE, Key: { PK: pk, SK: sk } }));
-  if (!result.Item) return;
-  const points = (result.Item.points as number) ?? 0;
-  // KAN-67: a total that a reversal brought back down to zero (or below) is
-  // deleted instead of resynced, so no empty row is left behind on the
-  // leaderboard. Same race guard as the update below: the delete only happens
-  // if points is still the value just read, so a concurrent award that landed
-  // in between wins and the row stays.
-  if (points <= 0) {
-    await docClient
-      .send(
-        new DeleteCommand({
-          TableName: TABLE,
-          Key: { PK: pk, SK: sk },
-          ConditionExpression: "points = :points",
-          ExpressionAttributeValues: { ":points": points },
-        })
-      )
-      .catch(ignoreConditionalCheckFailed);
-    return;
-  }
-  const userId = (sk as string).slice("USER#".length);
-  try {
-    await docClient.send(
-      new UpdateCommand({
-        TableName: TABLE,
-        Key: { PK: pk, SK: sk },
-        UpdateExpression: "SET GSI3SK = :gsi3sk",
-        ConditionExpression: "points = :points",
-        ExpressionAttributeValues: {
-          ":gsi3sk": `${padScore(points)}#${userId}`,
-          ":points": points,
-        },
-      })
-    );
-  } catch (err) {
-    if (!isConditionalCheckFailed(err)) throw err;
+  for (let attempt = 1; attempt <= MAX_TRANSACT_ATTEMPTS; attempt++) {
+    try {
+      const result = await docClient.send(new GetCommand({ TableName: TABLE, Key: { PK: pk, SK: sk } }));
+      if (!result.Item) return;
+      const points = (result.Item.points as number) ?? 0;
+      // KAN-67: a total that a reversal brought back down to zero (or below) is
+      // deleted instead of resynced, so no empty row is left behind on the
+      // leaderboard. Same race guard as the update below: the delete only happens
+      // if points is still the value just read, so a concurrent award that landed
+      // in between wins and the row stays.
+      if (points <= 0) {
+        await docClient
+          .send(
+            new DeleteCommand({
+              TableName: TABLE,
+              Key: { PK: pk, SK: sk },
+              ConditionExpression: "points = :points",
+              ExpressionAttributeValues: { ":points": points },
+            })
+          )
+          .catch(ignoreConditionalCheckFailed);
+        return;
+      }
+      const userId = (sk as string).slice("USER#".length);
+      try {
+        await docClient.send(
+          new UpdateCommand({
+            TableName: TABLE,
+            Key: { PK: pk, SK: sk },
+            UpdateExpression: "SET GSI3SK = :gsi3sk",
+            ConditionExpression: "points = :points",
+            ExpressionAttributeValues: {
+              ":gsi3sk": `${padScore(points)}#${userId}`,
+              ":points": points,
+            },
+          })
+        );
+      } catch (err) {
+        if (!isConditionalCheckFailed(err)) throw err;
+      }
+      return;
+    } catch (err) {
+      // KAN-105: the stream has several shards, so an award to the same
+      // earner running in another shard can still be holding this row in
+      // its transaction. Each retry starts over from the read, because the
+      // other writer has usually moved points by the time it lets go.
+      if (!isTransactionConflict(err)) throw err;
+      // Still contended after the last attempt: count it and move on rather
+      // than throw. The caller's points write is already settled by the
+      // time this step runs, so letting this reach safePointsOp would report
+      // a stale sort key as lost work.
+      if (attempt === MAX_TRANSACT_ATTEMPTS) {
+        console.warn(`points resync conflict survived retry: ${pk} / ${sk}`);
+        await emitPointsAwardResyncConflictMetric("transaction_conflict");
+        return;
+      }
+      await sleep(jitteredBackoffMs(attempt));
+    }
   }
 }
 
