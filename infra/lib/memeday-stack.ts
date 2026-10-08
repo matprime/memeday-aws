@@ -187,9 +187,15 @@ export class MemeDayStack extends cdk.Stack {
       alarmDescription: "MemeDay rate limit counter write failures",
     }).addAlarmAction(alertAction);
 
-    // KAN-101: emitted by lambdas/stream-handler whenever a points award
-    // TransactWriteItems call throws something other than a cancellation
-    // (i.e. a genuine infra fault, not a duplicate/cap-rejected award).
+    // KAN-101, narrowed by KAN-105: emitted by lambdas/stream-handler's
+    // safePointsOp when a points operation throws, which means work was lost:
+    // an award whose TransactWriteItems exhausted its retries (or that faulted
+    // before reaching it), or a reversal that faulted partway. A duplicate or
+    // cap-rejected award is an expected outcome and never emits this. Neither
+    // does a GSI3SK resync that still hits TransactionConflictException after
+    // its retries: the write before it is already settled, so that is counted
+    // on PointsAwardResyncConflict instead, which has no alarm. Any other
+    // fault in the resync (throttling, access denied) still lands here.
     new cloudwatch.Alarm(this, "PointsAwardFailureAlarm", {
       metric: new cloudwatch.Metric({
         namespace: "MemeDay",

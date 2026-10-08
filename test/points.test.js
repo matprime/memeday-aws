@@ -1237,6 +1237,11 @@ test("points: a persistent TransactionConflict exhausts retries and emits Points
       2,
       "each exhausted award emits its own PointsAwardFailure, nothing fails silently"
     );
+    assert.strictEqual(
+      metricCalls.filter((c) => c.MetricData?.[0]?.MetricName === "PointsAwardResyncConflict").length,
+      0,
+      "a lost award is never reported as a resync conflict"
+    );
 
     const award = await dynamo.send(
       new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${likerId}`, SK: `AWARD#GIVE_LIKE#${memeId}` } })
@@ -1417,6 +1422,230 @@ test("points: an award whose source item has no createdAt writes nothing, create
   } finally {
     cloudwatch.send = originalCwSend;
     console.warn = originalConsoleWarn;
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+// ── KAN-105: PointsAwardFailure means lost work, not a lost resync race ─────
+// Like the KAN-67 tests above, these drive MEME# records through the
+// in-process handler only (no real MEME# item is written), so the deployed
+// StreamHandler never touches the same period totals and every conflict seen
+// here is one the test injected.
+
+function isGsi3SkResync(command) {
+  return command.constructor?.name === "UpdateCommand" && command.input.UpdateExpression === "SET GSI3SK = :gsi3sk";
+}
+
+function transactionConflict() {
+  const err = new Error("Transaction is ongoing for the item");
+  err.name = "TransactionConflictException";
+  return err;
+}
+
+function countMetric(metricCalls, name) {
+  return metricCalls.filter((c) => c.MetricData?.[0]?.MetricName === name).length;
+}
+
+test("points: a transient TransactionConflict in the GSI3SK resync is retried, the resync lands, and no metric is emitted", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, docClient, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_pts_resync_retry_${Date.now()}`;
+  const creatorId = `test_pts_resync_retry_creator_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const keys = [
+    userKey(creatorId),
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `DAY#${now.slice(0, 10)}#UPLOAD` },
+    ...periodTotalKeys(creatorId, now),
+    { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
+  ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
+
+  const originalSend = docClient.send.bind(docClient);
+  const originalCwSend = cloudwatch.send;
+  let resyncAttempts = 0;
+  const metricCalls = [];
+  docClient.send = async (command) => {
+    if (isGsi3SkResync(command)) {
+      resyncAttempts++;
+      // Only the first resync write loses the race. Its own retry, and the
+      // other two period totals, go through untouched.
+      if (resyncAttempts === 1) throw transactionConflict();
+    }
+    return originalSend(command);
+  };
+  cloudwatch.send = async (command) => {
+    metricCalls.push(command.input);
+    return {};
+  };
+
+  try {
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, "active", now)), {}, () => {});
+
+    assert.strictEqual(resyncAttempts, 4, "three period totals, one of them resynced twice");
+    for (const key of periodTotalKeys(creatorId, now)) {
+      const total = await dynamo.send(new GetCommand({ TableName: TABLE, Key: key }));
+      assert.strictEqual(
+        total.Item?.GSI3SK,
+        `${padPoints(total.Item?.points)}#${creatorId}`,
+        `GSI3SK is in sync at ${key.PK} once the retry succeeds`
+      );
+    }
+    assert.strictEqual(countMetric(metricCalls, "PointsAwardFailure"), 0, "a resync conflict is not a lost award");
+    assert.strictEqual(countMetric(metricCalls, "PointsAwardResyncConflict"), 0, "a conflict that clears on retry is not counted at all");
+  } finally {
+    docClient.send = originalSend;
+    cloudwatch.send = originalCwSend;
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+test("points: a TransactionConflict in the GSI3SK resync that survives retry emits PointsAwardResyncConflict, not PointsAwardFailure", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, docClient, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_pts_resync_giveup_${Date.now()}`;
+  const creatorId = `test_pts_resync_giveup_creator_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const keys = [
+    userKey(creatorId),
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `DAY#${now.slice(0, 10)}#UPLOAD` },
+    ...periodTotalKeys(creatorId, now),
+    { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
+  ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
+
+  const originalSend = docClient.send.bind(docClient);
+  const originalCwSend = cloudwatch.send;
+  const originalConsoleWarn = console.warn;
+  console.warn = () => {};
+  let resyncAttempts = 0;
+  const metricCalls = [];
+  docClient.send = async (command) => {
+    if (isGsi3SkResync(command)) {
+      resyncAttempts++;
+      throw transactionConflict();
+    }
+    return originalSend(command);
+  };
+  cloudwatch.send = async (command) => {
+    metricCalls.push(command.input);
+    return {};
+  };
+
+  try {
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, "active", now)), {}, () => {});
+
+    assert.strictEqual(resyncAttempts, 9, "each of the three period totals gets the same 3-attempt budget as the award");
+
+    const award = await dynamo.send(
+      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` } })
+    );
+    assert.ok(award.Item, "the award itself committed, only the resync lost");
+
+    assert.strictEqual(countMetric(metricCalls, "PointsAwardFailure"), 0, "nothing was lost, so the alarmed metric stays at zero");
+    const conflicts = metricCalls.filter((c) => c.MetricData?.[0]?.MetricName === "PointsAwardResyncConflict");
+    assert.strictEqual(conflicts.length, 3, "one per period total left with a stale GSI3SK");
+    assert.strictEqual(conflicts[0].Namespace, "MemeDay");
+    assert.deepStrictEqual(
+      conflicts[0].MetricData[0].Dimensions,
+      [
+        { Name: "Stage", Value: "dev" },
+        { Name: "Reason", Value: "transaction_conflict" },
+      ],
+      "same dimensions as PointsAwardSkipped"
+    );
+  } finally {
+    docClient.send = originalSend;
+    cloudwatch.send = originalCwSend;
+    console.warn = originalConsoleWarn;
+    await cleanup(dynamo, DeleteCommand, TABLE, keys);
+  }
+});
+
+test("points: a fault while reversing an award emits PointsAwardFailure and is not retried", async (t) => {
+  if (skipIfNoCredentials(t)) return;
+
+  const { dynamo, TABLE } = await import("../lib/dynamo.ts");
+  const { GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+  const { handler, docClient, cloudwatch } = await import("../lambdas/stream-handler/index.ts");
+
+  const memeId = `test_pts_reverse_fault_${Date.now()}`;
+  const creatorId = `test_pts_reverse_fault_creator_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const keys = [
+    userKey(creatorId),
+    { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` },
+    { PK: `POINTS#${creatorId}`, SK: `DAY#${now.slice(0, 10)}#UPLOAD` },
+    ...periodTotalKeys(creatorId, now),
+    { PK: "LEADERBOARD#GLOBAL", SK: `USER#${creatorId}` },
+    { PK: "FEED#GLOBAL", SK: `${padPoints(0)}#${memeId}` },
+  ];
+
+  await seedUsers(dynamo, TABLE, [creatorId]);
+
+  const originalSend = docClient.send.bind(docClient);
+  const originalCwSend = cloudwatch.send;
+  const originalConsoleError = console.error;
+  let subtractionAttempts = 0;
+  const metricCalls = [];
+
+  try {
+    // A real, unmocked upload award first, so there is something to reverse.
+    await handler(streamEvent("INSERT", memeImage(memeId, creatorId, "active", now)), {}, () => {});
+    const award = await dynamo.send(
+      new GetCommand({ TableName: TABLE, Key: { PK: `POINTS#${creatorId}`, SK: `AWARD#UPLOAD#${memeId}` } })
+    );
+    assert.ok(award.Item, "upload award granted before the reversal under test");
+
+    console.error = () => {};
+    docClient.send = async (command) => {
+      // The same TransactionConflictException the resync tolerates, thrown
+      // from the reversal's own subtractions instead. Where it is thrown
+      // decides the metric, not what it is called.
+      if (command.constructor?.name === "UpdateCommand" && command.input.UpdateExpression === "ADD points :neg") {
+        subtractionAttempts++;
+        throw transactionConflict();
+      }
+      return originalSend(command);
+    };
+    cloudwatch.send = async (command) => {
+      metricCalls.push(command.input);
+      return {};
+    };
+
+    await handler(
+      streamEvent(
+        "MODIFY",
+        memeImage(memeId, creatorId, "pending_review", now),
+        memeImage(memeId, creatorId, "active", now)
+      ),
+      {},
+      () => {}
+    );
+
+    assert.strictEqual(subtractionAttempts, 3, "one subtraction per period total, none of them retried");
+    assert.strictEqual(countMetric(metricCalls, "PointsAwardFailure"), 1, "the failed reversal is counted on the alarmed metric");
+    assert.strictEqual(countMetric(metricCalls, "PointsAwardResyncConflict"), 0, "a reversal fault is not a resync conflict");
+  } finally {
+    docClient.send = originalSend;
+    cloudwatch.send = originalCwSend;
+    console.error = originalConsoleError;
     await cleanup(dynamo, DeleteCommand, TABLE, keys);
   }
 });
