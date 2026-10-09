@@ -553,8 +553,9 @@ afterwards.
 
 - SNS topic `memeday-alerts` (prod) / `memeday-alerts-dev`, email
   subscriptions from stack props.
-- CloudWatch alarms, all on a 5-minute window with `NOT_BREACHING` on missing
-  data: Errors > 0 for each of StreamHandler, S3Handler and ModerationHandler;
+- CloudWatch alarms, prod only (`MemeDayDev` creates none, KAN-106), all on a
+  5-minute window with `NOT_BREACHING` on missing data: Errors > 0 for each
+  of StreamHandler, S3Handler and ModerationHandler;
   DynamoDB `ThrottledRequests` > 0 on the table and its GSIs (PAY_PER_REQUEST
   can still throttle); `MemeDay/RateLimitCounterFailure` > 20, dimensioned by
   `Stage`, which is the only signal that the fail-open rate limiter is
