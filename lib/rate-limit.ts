@@ -26,8 +26,7 @@ const STAGE = TABLE === "MemeDayProd" ? "prod" : "dev";
 
 // Exported only so tests can stub .send, the same way they stub dynamo.send.
 // Without that, the fail-open tests would publish real datapoints into the dev
-// namespace on every run and could eventually trip the dev alarm. Nothing in
-// app code should import this.
+// namespace on every run. Nothing in app code should import this.
 export const cloudwatch = new CloudWatchClient({
   region: process.env.AWS_REGION ?? "us-east-1",
 });
