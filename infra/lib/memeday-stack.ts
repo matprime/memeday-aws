@@ -25,9 +25,10 @@ export class MemeDayStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: MemeDayStackProps) {
     super(scope, id, props);
 
-    // Both stages synthesize the same resources. Stage only affects resource
-    // names and how aggressively things are deleted, so anything verified
-    // against MemeDayDev is a real signal about MemeDayStack.
+    // Both stages synthesize the same resources, except that dev synthesizes
+    // no CloudWatch alarms. Otherwise stage only affects resource names and
+    // how aggressively things are deleted, so anything verified against
+    // MemeDayDev is a real signal about MemeDayStack.
     const isProd = props.stage === "prod";
     const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
@@ -151,65 +152,69 @@ export class MemeDayStack extends cdk.Stack {
     );
     const alertAction = new cwActions.SnsAction(alertTopic);
 
-    this.addErrorsAlarm(streamHandler, "StreamHandler", alertAction);
+    // Alarms are prod only (KAN-106). The CloudWatch free tier is metered on
+    // alarms existing, not on alarms firing, and dev has no on-call.
+    if (isProd) {
+      this.addErrorsAlarm(streamHandler, "StreamHandler", alertAction);
 
-    // DynamoDB throttling (table + GSIs) — PAY_PER_REQUEST can still throttle.
-    new cloudwatch.Alarm(this, "TableThrottleAlarm", {
-      metric: table.metric("ThrottledRequests", {
-        period: cdk.Duration.minutes(5),
-        statistic: "Sum",
-      }),
-      threshold: 0,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      alarmDescription: "MemeDay table throttled requests",
-    }).addAlarmAction(alertAction);
+      // DynamoDB throttling (table + GSIs) — PAY_PER_REQUEST can still throttle.
+      new cloudwatch.Alarm(this, "TableThrottleAlarm", {
+        metric: table.metric("ThrottledRequests", {
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 0,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: "MemeDay table throttled requests",
+      }).addAlarmAction(alertAction);
 
-    // lib/rate-limit.ts is fail-open: a failed counter write logs and lets the
-    // request through, so nobody is rate limited until it recovers. Nothing
-    // surfaces that on its own. The threshold is deliberately not zero, since
-    // isolated DynamoDB faults are expected and self-healing.
-    new cloudwatch.Alarm(this, "RateLimitCounterFailureAlarm", {
-      metric: new cloudwatch.Metric({
-        namespace: "MemeDay",
-        metricName: "RateLimitCounterFailure",
-        // Must match the Stage dimension emitted by lib/rate-limit.ts, or dev
-        // and prod would read each other's data.
-        dimensionsMap: { Stage: props.stage },
-        period: cdk.Duration.minutes(5),
-        statistic: "Sum",
-      }),
-      threshold: 20,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      alarmDescription: "MemeDay rate limit counter write failures",
-    }).addAlarmAction(alertAction);
+      // lib/rate-limit.ts is fail-open: a failed counter write logs and lets the
+      // request through, so nobody is rate limited until it recovers. Nothing
+      // surfaces that on its own. The threshold is deliberately not zero, since
+      // isolated DynamoDB faults are expected and self-healing.
+      new cloudwatch.Alarm(this, "RateLimitCounterFailureAlarm", {
+        metric: new cloudwatch.Metric({
+          namespace: "MemeDay",
+          metricName: "RateLimitCounterFailure",
+          // Must match the Stage dimension emitted by lib/rate-limit.ts, or dev
+          // and prod would read each other's data.
+          dimensionsMap: { Stage: props.stage },
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 20,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: "MemeDay rate limit counter write failures",
+      }).addAlarmAction(alertAction);
 
-    // KAN-101, narrowed by KAN-105: emitted by lambdas/stream-handler's
-    // safePointsOp when a points operation throws, which means work was lost:
-    // an award whose TransactWriteItems exhausted its retries (or that faulted
-    // before reaching it), or a reversal that faulted partway. A duplicate or
-    // cap-rejected award is an expected outcome and never emits this. Neither
-    // does a GSI3SK resync that still hits TransactionConflictException after
-    // its retries: the write before it is already settled, so that is counted
-    // on PointsAwardResyncConflict instead, which has no alarm. Any other
-    // fault in the resync (throttling, access denied) still lands here.
-    new cloudwatch.Alarm(this, "PointsAwardFailureAlarm", {
-      metric: new cloudwatch.Metric({
-        namespace: "MemeDay",
-        metricName: "PointsAwardFailure",
-        dimensionsMap: { Stage: props.stage },
-        period: cdk.Duration.minutes(5),
-        statistic: "Sum",
-      }),
-      threshold: 0,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      alarmDescription: "MemeDay points award failures",
-    }).addAlarmAction(alertAction);
+      // KAN-101, narrowed by KAN-105: emitted by lambdas/stream-handler's
+      // safePointsOp when a points operation throws, which means work was lost:
+      // an award whose TransactWriteItems exhausted its retries (or that faulted
+      // before reaching it), or a reversal that faulted partway. A duplicate or
+      // cap-rejected award is an expected outcome and never emits this. Neither
+      // does a GSI3SK resync that still hits TransactionConflictException after
+      // its retries: the write before it is already settled, so that is counted
+      // on PointsAwardResyncConflict instead, which has no alarm. Any other
+      // fault in the resync (throttling, access denied) still lands here.
+      new cloudwatch.Alarm(this, "PointsAwardFailureAlarm", {
+        metric: new cloudwatch.Metric({
+          namespace: "MemeDay",
+          metricName: "PointsAwardFailure",
+          dimensionsMap: { Stage: props.stage },
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 0,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: "MemeDay points award failures",
+      }).addAlarmAction(alertAction);
+    }
 
     new cdk.CfnOutput(this, "AlertTopicArn", { value: alertTopic.topicArn });
 
@@ -268,7 +273,9 @@ export class MemeDayStack extends cdk.Stack {
       { prefix: "uploads/" }
     );
 
-    this.addErrorsAlarm(s3Handler, "S3Handler", alertAction);
+    if (isProd) {
+      this.addErrorsAlarm(s3Handler, "S3Handler", alertAction);
+    }
 
     // --- Rekognition content moderation handler (KAN-44) ---
     // No S3 event subscription of its own: S3 rejects two overlapping
@@ -309,7 +316,9 @@ export class MemeDayStack extends cdk.Stack {
     // runtime users — table.grantReadWriteData grants only this function's role.
     table.grantReadWriteData(moderationHandler);
 
-    this.addErrorsAlarm(moderationHandler, "ModerationHandler", alertAction);
+    if (isProd) {
+      this.addErrorsAlarm(moderationHandler, "ModerationHandler", alertAction);
+    }
 
     // S3Handler invokes ModerationHandler directly after validation succeeds
     // (see lambdas/s3-handler) — scoped to this one function, not "*".
