@@ -31,6 +31,12 @@ const EXT_TO_FORMAT: Record<string, string> = {
   png: "png",
 };
 
+const MAGIC_BYTES: Record<string, number[]> = {
+  png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  jpg: [0xff, 0xd8, 0xff],
+  jpeg: [0xff, 0xd8, 0xff],
+};
+
 // GIF/WEBP are rejected explicitly (distinct from "unsupported extension")
 // because Rekognition's DetectModerationLabels only supports JPEG/PNG, so
 // these formats can't be screened yet. Temporary until frame-extraction
@@ -139,6 +145,15 @@ export const handler: S3Handler = async (event) => {
       }
 
       const buffer = Buffer.from(await obj.Body!.transformToByteArray());
+
+      // libvips picks its loader from the bytes, not the file name, so without
+      // this check untrusted SVG or TIFF content named .png reaches sharp's
+      // native loaders before it is rejected. CVE-2026-96889 is in the SVG path.
+      const magic = MAGIC_BYTES[ext];
+      if (!magic.every((byte, i) => buffer[i] === byte)) {
+        await reject(key, pendingId, `magic bytes do not match extension .${ext}`);
+        continue;
+      }
 
       let metadata;
       try {
