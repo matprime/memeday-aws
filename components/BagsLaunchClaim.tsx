@@ -67,20 +67,39 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
 
   useEffect(() => {
     setBalanceLamports(null);
+  }, [publicKey]);
+
+  // Re-read on tab focus, and every 15s while the warning is showing, so
+  // topping up the wallet clears it without a reload. Polling stops once the
+  // balance is at or above the minimum.
+  const balanceLow = balanceLamports !== null && isBelowBagsLaunchMin(balanceLamports);
+  useEffect(() => {
     if (!publicKey) return;
     let cancelled = false;
-    connection
-      .getBalance(publicKey)
-      .then((balance) => {
-        if (!cancelled) setBalanceLamports(balance);
-      })
-      .catch((err) => {
-        console.error("Bags launch balance check failed", err);
-      });
+    const read = () => {
+      connection
+        .getBalance(publicKey)
+        .then((balance) => {
+          if (!cancelled) setBalanceLamports(balance);
+        })
+        .catch((err) => {
+          console.error("Bags launch balance check failed", err);
+        });
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") read();
+    };
+    read();
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = balanceLow ? setInterval(read, 15_000) : undefined;
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", onVisible);
+      if (timer) clearInterval(timer);
     };
-  }, [publicKey, connection]);
+  }, [publicKey, connection, balanceLow]);
 
   // Restore what the creator typed before bags.fm took them away. Runs after
   // mount (not in the useState initializers) so server and client markup match.
@@ -288,7 +307,7 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
           before clicking Launch.
         </p>
 
-        {balanceLamports !== null && isBelowBagsLaunchMin(balanceLamports) && (
+        {balanceLamports !== null && balanceLow && (
           <p className="text-xs text-amber-400 mb-3">
             Your wallet holds {(balanceLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL. A launch on
             bags.fm needs about {BAGS_LAUNCH_MIN_SOL} SOL for fees.
