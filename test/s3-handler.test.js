@@ -258,3 +258,116 @@ test("S3Handler: rejected upload (fails validation) never invokes ModerationHand
 
   assert.strictEqual(invokeCalls.length, 0, "a rejected file never triggers moderation");
 });
+
+// --- magic-bytes sniff (KAN-108 / CVE-2026-96889) ---
+// sharp is imported as a bound ESM binding in the handler, so it can't be
+// spied on from here. Instead each test asserts the new rejection reason: the
+// old post-sharp check would have said "file signature (svg|tiff) ...", so
+// seeing the magic-bytes reason proves the check fired before sharp ran.
+
+async function runUpload(key, body) {
+  const { handler, s3, docClient, lambdaClient } = await import("../lambdas/s3-handler/index.ts");
+  const pendingId = key.split("/").pop().split(".")[0];
+
+  const updates = [];
+  const deletes = [];
+  const puts = [];
+  const restoreS3 = mockSend(s3, {
+    GetObjectCommand: async () => ({
+      Body: { transformToByteArray: async () => body },
+      ContentType: "image/png",
+      Metadata: {},
+    }),
+    PutObjectCommand: async (cmd) => {
+      puts.push(cmd.input);
+      return {};
+    },
+    DeleteObjectCommand: async (cmd) => {
+      deletes.push(cmd.input.Key);
+      return {};
+    },
+  });
+  const restoreDoc = mockSend(docClient, {
+    GetCommand: async () => ({ Item: { PK: `PENDING#${pendingId}`, SK: `PENDING#${pendingId}`, status: "pending" } }),
+    UpdateCommand: async (cmd) => {
+      updates.push(cmd.input);
+      return {};
+    },
+  });
+  const restoreLambda = mockSend(lambdaClient, { InvokeCommand: async () => ({}) });
+
+  try {
+    await handler({ Records: [{ s3: { object: { key, size: body.length } } }] }, {}, () => {});
+  } finally {
+    restoreS3();
+    restoreDoc();
+    restoreLambda();
+  }
+  return { updates, deletes, puts };
+}
+
+async function solidImage(format) {
+  const sharp = require("sharp");
+  return sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 10, g: 20, b: 30 } },
+  })
+    [format]()
+    .toBuffer();
+}
+
+test("S3Handler: SVG bytes named .png are rejected by the magic-bytes check before sharp", async () => {
+  const svg = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="red"/></svg>'
+  );
+  const key = "uploads/test-user/svg-as-png.png";
+
+  const { updates, deletes, puts } = await runUpload(key, svg);
+
+  assert.strictEqual(updates.length, 1);
+  assert.strictEqual(updates[0].ExpressionAttributeValues[":reason"], "magic bytes do not match extension .png");
+  assert.deepStrictEqual(deletes, [key], "the disguised object is deleted");
+  assert.strictEqual(puts.length, 0, "nothing is re-encoded or written back");
+});
+
+test("S3Handler: TIFF bytes named .png are rejected by the magic-bytes check before sharp", async () => {
+  const tiff = await solidImage("tiff");
+  const key = "uploads/test-user/tiff-as-png.png";
+
+  const { updates, deletes, puts } = await runUpload(key, tiff);
+
+  assert.strictEqual(updates.length, 1);
+  assert.strictEqual(updates[0].ExpressionAttributeValues[":reason"], "magic bytes do not match extension .png");
+  assert.deepStrictEqual(deletes, [key], "the disguised object is deleted");
+  assert.strictEqual(puts.length, 0, "nothing is re-encoded or written back");
+});
+
+test("S3Handler: a valid PNG passes the magic-bytes check and is re-encoded", async () => {
+  const sharp = require("sharp");
+  const png = await solidImage("png");
+  const key = "uploads/test-user/valid-png.png";
+
+  const { updates, deletes, puts } = await runUpload(key, png);
+
+  assert.strictEqual(puts.length, 1, "the cleaned re-encode is written back");
+  assert.strictEqual(puts[0].Metadata.validated, "true");
+  assert.strictEqual((await sharp(puts[0].Body).metadata()).format, "png");
+  assert.strictEqual(deletes.length, 0);
+  assert.strictEqual(updates[0].ExpressionAttributeValues[":screening"], "screening");
+});
+
+test("S3Handler: a valid JPEG passes the magic-bytes check as .jpg and .jpeg and is re-encoded", async () => {
+  const sharp = require("sharp");
+  const jpeg = await solidImage("jpeg");
+
+  for (const ext of ["jpg", "jpeg"]) {
+    const key = `uploads/test-user/valid-jpeg-${ext}.${ext}`;
+
+    const { updates, deletes, puts } = await runUpload(key, jpeg);
+
+    assert.strictEqual(puts.length, 1, `.${ext}: the cleaned re-encode is written back`);
+    assert.strictEqual(puts[0].Metadata.validated, "true");
+    assert.strictEqual((await sharp(puts[0].Body).metadata()).format, "jpeg");
+    assert.strictEqual(deletes.length, 0);
+    assert.strictEqual(updates[0].ExpressionAttributeValues[":screening"], "screening");
+  }
+});
