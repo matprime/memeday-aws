@@ -2,11 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { Zap, ExternalLink, Loader2 } from "lucide-react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { useAppStore } from "@/lib/store";
 import { getAccessToken } from "@/lib/session";
 import { buildBagsLaunchIntentUrl, extractBagsTokenMint, BagsLaunchConfigError } from "@/lib/bags";
 import { BagsTokenCard } from "@/components/BagsTokenCard";
 import { EVENTS, track } from "@/lib/analytics";
+import {
+  BAGS_LAUNCH_MIN_SOL,
+  isBelowBagsLaunchMin,
+  saveBagsLaunchDraft,
+  loadBagsLaunchDraft,
+  clearBagsLaunchDraft,
+} from "@/lib/bags-launch-draft";
 
 interface Props {
   // The meme this token belongs to. A token is bound to one meme and only its
@@ -33,6 +42,8 @@ interface TokenSummary {
 // server-side, this component just renders whichever they hand back.
 export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim }: Props) {
   const { addToast } = useAppStore();
+  const { publicKey } = useWallet();
+  const { connection } = useConnection();
 
   // Whether this meme already has a verified token drives launch-button vs
   // card. null = still checking.
@@ -48,6 +59,16 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
   const [mintAddress, setMintAddress] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // Restore what the creator typed before bags.fm took them away. Runs after
+  // mount (not in the useState initializers) so server and client markup match.
+  useEffect(() => {
+    const draft = loadBagsLaunchDraft(memeId);
+    if (!draft) return;
+    if (draft.name !== undefined) setName(draft.name.slice(0, 32));
+    if (draft.ticker !== undefined) setTicker(draft.ticker);
+    if (draft.description !== undefined) setDescription(draft.description);
+  }, [memeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +107,7 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Verification failed");
 
+      clearBagsLaunchDraft(memeId);
       setExistingToken({ tokenMint: data.token.tokenMint, name: data.token.name, symbol: data.token.symbol });
       track(EVENTS.bagsVerifyConfirmed, { simulated: data.simulated, tokenMint: data.token.tokenMint });
       addToast(
@@ -115,6 +137,7 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
 
   const handleLaunch = async () => {
     if (!ticker.trim() || !name.trim() || launching) return;
+    saveBagsLaunchDraft(memeId, { name, ticker, description });
     setLaunching(true);
     try {
       const accessToken = await getAccessToken();
@@ -139,6 +162,23 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
         // simulated verify result so the flow stays reviewable on Preview.
         await verify(undefined);
         return;
+      }
+
+      // Warn, never block: a short balance is worth knowing about before the
+      // tab opens, but the creator may fund a different wallet on bags.fm. A
+      // failed read is logged and ignored.
+      if (publicKey) {
+        try {
+          const balance = await connection.getBalance(publicKey);
+          if (isBelowBagsLaunchMin(balance)) {
+            addToast(
+              `Your wallet holds ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL. A launch on bags.fm needs about ${BAGS_LAUNCH_MIN_SOL} SOL for fees.`,
+              "warning"
+            );
+          }
+        } catch (err) {
+          console.error("Bags launch balance check failed", err);
+        }
       }
 
       const url = buildBagsLaunchIntentUrl({
@@ -238,6 +278,10 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
           MemeDay is a Bags launch partner and receives a share of Bags&apos; platform fee on
           tokens launched through this link. This does not reduce your own creator fees.
         </p>
+        <p className="text-xs text-gray-500 mb-3">
+          A launch on bags.fm needs a bags.fm account and some SOL for fees, so set those up
+          before clicking Launch.
+        </p>
 
         <button
           onClick={handleLaunch}
@@ -256,11 +300,10 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
       {(alwaysShowClaim || awaitingMint) && (
         <div className="bg-bg/60 border border-border/50 rounded-xl p-4">
           <p className="text-sm font-semibold text-white mb-1">
-            {awaitingMint ? "Launched your token?" : "Claim your Bags token"}
+            {awaitingMint ? "Launched your token?" : "Already launched on bags.fm?"}
           </p>
           <p className="text-xs text-gray-400 mb-3">
-            Paste the mint address Bags gave you so MemeDay can verify and show it on your
-            profile.
+            Paste your token address here so MemeDay can verify and show it on your profile.
           </p>
           <p className="text-xs text-gray-500 mb-3">
             This binding is permanent and cannot be changed later.

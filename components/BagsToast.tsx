@@ -18,12 +18,16 @@ export function BagsToastContainer() {
                 ? "linear-gradient(135deg, rgba(249,115,22,0.15), rgba(251,146,60,0.1))"
                 : toast.type === "error"
                 ? "rgba(239,68,68,0.15)"
+                : toast.type === "warning"
+                ? "rgba(234,179,8,0.15)"
                 : "rgba(124,58,237,0.15)",
             borderColor:
               toast.type === "bags"
                 ? "rgba(249,115,22,0.4)"
                 : toast.type === "error"
                 ? "rgba(239,68,68,0.4)"
+                : toast.type === "warning"
+                ? "rgba(234,179,8,0.4)"
                 : "rgba(124,58,237,0.4)",
           }}
         >
