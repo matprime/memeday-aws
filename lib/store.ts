@@ -20,7 +20,7 @@ export function decodeJwtSub(token: string): string | null {
 interface Toast {
   id: string;
   message: string;
-  type: "bags" | "success" | "error";
+  type: "bags" | "success" | "error" | "warning";
 }
 
 interface AppState {
