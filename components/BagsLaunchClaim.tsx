@@ -60,6 +60,28 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
+  // Shown inline before Launch is clicked: a toast raised just before
+  // window.open is never seen, since the browser has already moved to the
+  // bags.fm tab. Warn only. The creator may fund a different wallet there.
+  const [balanceLamports, setBalanceLamports] = useState<number | null>(null);
+
+  useEffect(() => {
+    setBalanceLamports(null);
+    if (!publicKey) return;
+    let cancelled = false;
+    connection
+      .getBalance(publicKey)
+      .then((balance) => {
+        if (!cancelled) setBalanceLamports(balance);
+      })
+      .catch((err) => {
+        console.error("Bags launch balance check failed", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey, connection]);
+
   // Restore what the creator typed before bags.fm took them away. Runs after
   // mount (not in the useState initializers) so server and client markup match.
   useEffect(() => {
@@ -164,23 +186,6 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
         return;
       }
 
-      // Warn, never block: a short balance is worth knowing about before the
-      // tab opens, but the creator may fund a different wallet on bags.fm. A
-      // failed read is logged and ignored.
-      if (publicKey) {
-        try {
-          const balance = await connection.getBalance(publicKey);
-          if (isBelowBagsLaunchMin(balance)) {
-            addToast(
-              `Your wallet holds ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL. A launch on bags.fm needs about ${BAGS_LAUNCH_MIN_SOL} SOL for fees.`,
-              "warning"
-            );
-          }
-        } catch (err) {
-          console.error("Bags launch balance check failed", err);
-        }
-      }
-
       const url = buildBagsLaunchIntentUrl({
         name,
         ticker,
@@ -282,6 +287,13 @@ export function BagsLaunchClaim({ memeId, imageUrl, defaultName, alwaysShowClaim
           A launch on bags.fm needs a bags.fm account and some SOL for fees, so set those up
           before clicking Launch.
         </p>
+
+        {balanceLamports !== null && isBelowBagsLaunchMin(balanceLamports) && (
+          <p className="text-xs text-amber-400 mb-3">
+            Your wallet holds {(balanceLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL. A launch on
+            bags.fm needs about {BAGS_LAUNCH_MIN_SOL} SOL for fees.
+          </p>
+        )}
 
         <button
           onClick={handleLaunch}
